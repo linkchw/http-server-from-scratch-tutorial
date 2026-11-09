@@ -1,0 +1,143 @@
+\chapter{Implementing the Task API}
+\chapterintro{The framework and repository meet in a thin application layer. Handlers translate HTTP inputs into validated repository calls and translate results into resource representations.}
+
+\begin{objectives}
+\begin{itemize}
+  \item Build CRUD handlers without leaking HTTP into the repository.
+  \item Validate create, replace, patch, path IDs, and list queries consistently.
+  \item Run the API and exercise it with a standard-library client.
+  \item Trace one create and one update through every layer.
+\end{itemize}
+\end{objectives}
+
+\section{Application construction}
+
+\code{build\_app(database\_path)} initializes the schema, creates a repository,
+creates an Application, registers handlers, and returns it. The function makes
+tests easy: every test supplies a temporary path and receives a fully configured
+application without starting a socket.
+
+The complete application layer follows. Read it once from top to bottom, then
+return to the route-by-route discussion.
+
+\codefile{../code/final/task_api/app.py}
+
+\section{Create flow}
+
+The POST handler requires a declared nonempty body, decodes JSON, validates a
+full task document, supplies timestamps, and calls \code{repository.create}.
+It returns the created dictionary as JSON with 201 and Location.
+
+The server-generated fields never come from the request. This prevents a client
+from choosing another task's identity or falsifying creation history. Unknown
+input names fail validation, so a client typo such as \code{prioriy} is visible.
+
+\section{Read and list flow}
+
+The individual GET converts the captured ID. Invalid or nonpositive IDs receive
+the same task-not-found category as absent records, keeping the public resource
+contract simple.
+
+The collection GET validates every query name, repetition count, enum, date,
+integer range, and search length before repository access. The list result
+combines items with total and effective pagination values. A caller can construct
+the next offset without inferring defaults.
+
+\section{PUT and PATCH}
+
+Both update handlers validate content before touching storage and set a new UTC
+update timestamp. PUT calls full-document validation, which requires title and
+supplies defaults. PATCH calls partial validation, which rejects empty input and
+includes only provided fields.
+
+The repository return value distinguishes missing ID. A validation error is 422;
+a valid modification targeting an absent task is 404. These outcomes must not be
+collapsed into a generic 400.
+
+\section{Date and timestamp choices}
+
+Due date is a calendar date with no timezone. Validation parses it and requires
+that serializing the parsed date produces exactly the original text, excluding
+alternate compact forms accepted by some library versions.
+
+Audit timestamps represent instants and use UTC with a trailing \code{Z}, to
+second precision. A production system might use database-generated timestamps,
+higher precision, or a test-injectable clock. Here the helper keeps one format
+throughout the application.
+
+\section{Run the API}
+
+From \filepath{code/final}:
+
+\begin{wiremessage}
+python -m task_api --database tasks.db
+\end{wiremessage}
+
+The command binds to \code{127.0.0.1:8080}, initializes the database, starts 16
+workers, and enables bounded keep-alive. Optional arguments select host, port,
+database path, worker count, and keep-alive behavior.
+
+In a second terminal:
+
+\begin{wiremessage}
+python client_example.py
+\end{wiremessage}
+
+The client uses \code{http.client}, creates a task, reads and prints the response,
+then reuses the connection to list matching tasks. Because it is standard-library
+code, the core demonstration does not depend on curl or a third-party SDK.
+
+\codefile{../code/final/client_example.py}
+
+\section{Trace a PATCH}
+
+For \method{PATCH /tasks/1} with \code{\{"status":"done"\}}:
+
+\begin{enumerate}
+  \item HTTP parser frames the declared body and parses the target.
+  \item Router captures \code{task\_id = "1"}.
+  \item Handler checks body, media type, UTF-8, and JSON.
+  \item Partial validator accepts only the status field and adds no defaults.
+  \item Handler adds \code{updated\_at}.
+  \item Repository generates assignments from its allow-list and binds values.
+  \item SQLite updates inside a transaction and returns the complete row.
+  \item Response factory encodes the representation; server frames and sends it.
+\end{enumerate}
+
+If any step fails, ownership is clear. A malformed request never reaches routing;
+an invalid enum never reaches SQL; a missing row becomes a resource 404; an
+unexpected database error crosses the generic 500 boundary.
+
+\begin{tryit}
+Create three tasks with different status, priority, and due dates. Query combined
+filters and pagination. Then send an unknown query parameter, repeated limit,
+invalid date, list instead of object, unsupported media type, and nonexistent ID.
+Record status and problem type for each.
+\end{tryit}
+
+\summarytitle
+
+The Task application is thin translation code between HTTP and a repository.
+It validates each input category, owns resource semantics and status choices,
+protects server-generated fields, and returns stable representations/problems.
+The complete backend runs without third-party Python packages.
+
+\reviewtitle
+\begin{enumerate}
+  \item Why does \code{build\_app} accept a database path instead of using a fixed global database?
+  \item Which fields can a client write, and which remain server-owned?
+  \item Why are alternate date spellings rejected even if Python can parse them?
+  \item At which step does a missing row become an HTTP 404?
+\end{enumerate}
+
+\begin{exercise}[End-to-end extension]
+Add a \code{GET /tasks/summary} static route returning counts by status. Write
+the contract first, add a repository aggregate with parameter-free SQL, ensure
+the static route beats \code{/tasks/\{task\_id\}}, and test response/problem cases.
+\end{exercise}
+
+\begin{exercise}[Optimistic concurrency design]
+Without implementing it, design ETag and \code{If-Match} support for updates.
+Define validator generation, success and precondition-failure statuses, database
+atomicity, and behavior when the field is absent.
+\end{exercise}

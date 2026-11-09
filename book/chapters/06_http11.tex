@@ -1,0 +1,172 @@
+\chapter{HTTP/1.1 on the wire}
+\chapterintro{HTTP semantics are abstract; HTTP/1.1 gives them a textual start line, fields, framing rules, and connection behavior. Small parsing shortcuts here can become security vulnerabilities.}
+
+\begin{objectives}
+\begin{itemize}
+  \item Read request lines, status lines, header sections, and message bodies as bytes.
+  \item Determine message-body length for the subset implemented in this book.
+  \item Explain persistent connections and why exact consumption matters.
+  \item Recognize ambiguous framing and request-smuggling risk.
+\end{itemize}
+\end{objectives}
+
+\section{Message shape}
+
+An HTTP/1.1 message contains a start line terminated by CRLF, zero or more field
+lines each terminated by CRLF, an empty CRLF line, and an optional body. A
+request uses a request line; a response uses a status line.
+
+\begin{wiremessage}
+POST /tasks?notify=false HTTP/1.1
+Host: 127.0.0.1:8080
+Content-Type: application/json
+Content-Length: 21
+
+{"title":"Read RFC"}
+\end{wiremessage}
+
+The displayed blank line is mandatory. In actual bytes, every line ends with
+\code{\\r\\n}. The body is 21 UTF-8 bytes in this example. A parser must not
+search for a newline to end JSON; JSON can contain escaped newlines and the next
+request may follow immediately.
+
+\section{The request line}
+
+The request line contains method, one space, request target, one space, and HTTP
+version. For a direct request to an origin server, the common target form is the
+path and optional query, called \term{origin-form}. Proxies can receive an
+absolute URI. CONNECT and OPTIONS define other forms.
+
+Our server accepts HTTP/1.1 origin-form targets and the asterisk target for
+server-wide OPTIONS. It rejects other forms explicitly. It also preserves method
+case so a lowercase \code{get} is not silently turned into the standard GET.
+
+\section{Field parsing}
+
+Field names use a restricted token grammar and are case-insensitive. A colon
+separates name from value. Obsolete line folding is rejected. Control characters
+in values are rejected. Exactly one non-empty \code{Host} field is required for
+the implemented HTTP/1.1 subset.
+
+Repeated fields need field-specific handling. The final \code{Headers} type
+stores an ordered list and exposes both \code{get} and \code{get\_all}. For
+framing, the implementation deliberately rejects repeated \code{Content-Length}
+even when values match. This is stricter than some permitted normalization and
+reduces ambiguity in an educational parser.
+
+\section{Where does the body end?}
+
+Message framing is not the same as media parsing. The server must first isolate
+the exact body bytes. Only then should JSON code interpret them.
+
+For requests in our subset:
+
+\begin{enumerate}
+  \item A \code{Transfer-Encoding} field is rejected because transfer codings,
+        including chunked coding, are not implemented.
+  \item A simultaneous \code{Transfer-Encoding} and \code{Content-Length} is
+        rejected as ambiguous.
+  \item More than one \code{Content-Length} is rejected.
+  \item One valid non-negative \code{Content-Length} frames exactly that many bytes.
+  \item Without either field, the request has a zero-length body. Endpoints that
+        require content can answer \status{411 Length Required}.
+\end{enumerate}
+
+The parser keeps bytes after the framed body. On a persistent connection those
+bytes can begin the next request. Discarding them would corrupt the stream;
+including them in the first body would do the same.
+
+\begin{securityboundary}
+Request smuggling occurs when two HTTP recipients disagree about where one
+request ends and another begins. Conflicting length fields, transfer-coding
+differences, and permissive whitespace parsing are common ingredients. A small
+server behind a proxy must not assume ambiguity is harmless merely because its
+own parser chooses one interpretation.
+\end{securityboundary}
+
+\section{Chunked transfer coding}
+
+Chunked coding represents a body as hexadecimal-size chunks followed by a
+zero-size chunk and optional trailer fields. It lets a sender begin before the
+final content length is known. A compliant general-purpose HTTP/1.1 parser needs
+careful support for its grammar, extensions, decoded-size limits, trailers, and
+interactions with other fields.
+
+The book explains chunking but the framework returns \status{501 Not Implemented}
+and closes the connection whenever \code{Transfer-Encoding} is present. This is
+an explicit product boundary, not an accidental omission hidden behind incorrect
+parsing.
+
+\section{Response framing and special cases}
+
+A response status line contains version, three-digit status, and an optional
+reason phrase. Reason phrases are for humans and do not define status semantics.
+Our serializer adds \code{Date}, \code{Server}, \code{Connection}, and usually
+\code{Content-Length}.
+
+Responses to HEAD carry the fields that a corresponding GET would produce but
+do not carry the content bytes. The \code{Content-Length} can therefore describe
+the hypothetical GET body while no body follows. Informational responses,
+\status{204 No Content}, and \status{304 Not Modified} have rules that prohibit
+message content; our serializer suppresses it.
+
+\section{Persistent connections}
+
+HTTP/1.1 uses persistent connections by default. After a framed response, the
+connection can carry another request. Either side can signal
+\code{Connection: close}. Persistence avoids repeated TCP and TLS handshakes,
+but it also means a worker can be occupied by an idle peer.
+
+The final server supports sequential requests with a five-second idle timeout
+and at most 100 requests per connection. It always sends a length-delimited
+response when content is allowed. Early stages send \code{Connection: close} so
+only one message needs to be considered while fundamentals are introduced.
+
+HTTP/1.1 pipelining permits a client to send later requests without waiting for
+earlier responses, with responses kept in order. It proved difficult to use
+robustly in browsers and is not a focus here. Our incremental buffer can retain
+an already-arrived next request, but each connection processes requests
+sequentially.
+
+\section{Limits are protocol behavior}
+
+Without explicit limits, a peer can send an enormous target, unending fields, or
+a declared body too large to store. The final configuration limits the request
+line to 8 KiB, the header section to 32 KiB and 100 fields, and the body to 1 MiB.
+It answers with \status{414 URI Too Long}, \status{431 Request Header Fields Too
+Large}, or \status{413 Content Too Large} as appropriate.
+
+\begin{pitfall}
+Calling a single receive operation with a 32 KiB buffer does not impose a valid
+32 KiB header limit. The call can return fewer bytes, and a peer can continue.
+The implementation must accumulate and count until it finds the delimiter or
+crosses the limit.
+\end{pitfall}
+
+\summarytitle
+
+HTTP/1.1 uses CRLF-delimited start and field lines, a blank line, and explicit
+body-framing rules. Persistent connections make exact byte consumption mandatory.
+A strict subset can be correct when it clearly rejects unsupported framing and
+ambiguous inputs; a permissive half-implementation is dangerous.
+
+\reviewtitle
+\begin{enumerate}
+  \item Why does JSON parsing begin only after HTTP body framing succeeds?
+  \item What happens to bytes after the declared request body?
+  \item Why does a HEAD response sometimes contain a nonzero Content-Length?
+  \item Why does this server reject transfer coding instead of ignoring it?
+\end{enumerate}
+
+\begin{exercise}[Frame two requests]
+Write two GET requests consecutively with no extra separator beyond the first
+request's final CRLF pair. Mark the exact boundary. Repeat with a POST whose body
+ends immediately before the second request.
+\end{exercise}
+
+\begin{exercise}[Ambiguity review]
+Analyze a request containing both \code{Transfer-Encoding: chunked} and
+\code{Content-Length: 4}. Explain how disagreement between a proxy and origin
+could cause the following bytes to be interpreted differently.
+\end{exercise}
+

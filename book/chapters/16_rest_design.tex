@@ -1,0 +1,159 @@
+\chapter{Designing the Task REST API}
+\chapterintro{Before writing SQL or handlers, define resources, representations, method semantics, validation, and errors. A written contract prevents implementation accidents from becoming the API.}
+
+\begin{objectives}
+\begin{itemize}
+  \item Model a task resource and its collection representation.
+  \item Define CRUD behavior with precise method and status semantics.
+  \item Distinguish full replacement, partial modification, filtering, and pagination.
+  \item Specify stable success and problem documents before implementation.
+\end{itemize}
+\end{objectives}
+
+\section{Resource model}
+
+The service exposes a task collection at \code{/tasks} and individual tasks at
+\code{/tasks/\{id\}}. A task representation contains:
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}>{\bfseries}p{27mm} p{29mm} X@{}}
+\toprule
+Field & Type & Rule \\
+\midrule
+id & integer & Server-generated positive identifier \\
+title & string & Required, trimmed, 1--200 characters \\
+description & string & Optional, at most 2000 characters; default empty \\
+status & enum & \code{todo}, \code{in\_progress}, or \code{done} \\
+priority & enum & \code{low}, \code{medium}, or \code{high} \\
+due\_date & date or null & Exact \code{YYYY-MM-DD} form \\
+created\_at & timestamp & Server-generated UTC RFC 3339 text \\
+updated\_at & timestamp & Server-generated UTC RFC 3339 text \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Clients may write only title, description, status, priority, and due date.
+Unknown fields are rejected rather than ignored, catching misspellings and
+preventing clients from believing a value was stored when it was not.
+
+\section{Collection operations}
+
+\method{POST /tasks} accepts a JSON object, applies defaults, creates a resource,
+and returns \status{201 Created}. The body is the complete created representation
+and \code{Location} identifies \code{/tasks/\{id\}}. The operation is not
+idempotent: repeating it creates another task.
+
+\method{GET /tasks} returns:
+
+\begin{lstlisting}[style=wire]
+{
+  "items": [ ... task representations ... ],
+  "total": 37,
+  "limit": 20,
+  "offset": 0
+}
+\end{lstlisting}
+
+Supported filters are \code{status}, \code{priority}, \code{due\_before}, and
+text query \code{q}. \code{limit} defaults to 20 and is between 1 and 100.
+\code{offset} defaults to zero and is non-negative. Every supported parameter
+may appear once; unknown or repeated parameters receive a validation problem.
+
+Offset pagination is simple and suitable for a teaching database. Under
+concurrent inserts it can repeat or skip items between pages. Cursor pagination
+is often preferable for large, changing datasets but requires a stable ordering
+key and a documented cursor format.
+
+\section{Individual operations}
+
+\method{GET /tasks/\{id\}} returns 200 with a task or 404 with a stable
+\code{task-not-found} problem.
+
+\method{PUT /tasks/\{id\}} is full replacement. Title is required. Omitted
+optional fields return to defaults. Server-owned identity and creation timestamp
+remain unchanged; update timestamp changes. Repeating the same PUT has the same
+intended resource effect, although the timestamp changes.
+
+\method{PATCH /tasks/\{id\}} updates only supplied writable fields. An empty
+object is rejected. PATCH is not assumed idempotent in general; this particular
+merge-style field assignment is idempotent for the same values.
+
+\method{DELETE /tasks/\{id\}} deletes an existing task and returns 204 with no
+content. Deleting an absent task returns 404. The intended final resource state
+still makes DELETE idempotent.
+
+\section{Validation sequence}
+
+Validation proceeds from transport toward domain:
+
+\begin{enumerate}
+  \item HTTP parser validates message framing and limits.
+  \item A body-required endpoint requires \code{Content-Length} and nonempty bytes.
+  \item Request JSON helper requires the media type, UTF-8, and JSON grammar.
+  \item Task validation requires an object, writable names, types, lengths,
+        enum membership, and exact date format.
+  \item The repository uses database constraints as a final durable backstop.
+\end{enumerate}
+
+Validation errors use 422 and an \code{errors} object. Malformed JSON remains
+400 because no valid JSON value exists to validate. Unsupported media type is
+415. These distinctions help a client decide what to fix.
+
+\begin{wireview}
+\begin{wiremessage}
+POST /tasks HTTP/1.1
+Host: 127.0.0.1:8080
+Content-Type: application/json
+Content-Length: 47
+
+{"title":"Learn routing","priority":"high"}
+\end{wiremessage}
+The server supplies \code{status=todo}, an empty description, null due date,
+timestamps, and an identifier.
+\end{wireview}
+
+\section{Error contract}
+
+Every application error is \code{application/problem+json}. A task validation
+problem uses a stable type URI. A client can render the title/detail for a person
+and map \code{errors} to form fields. It should use \code{status} and \code{type}
+for program logic.
+
+Not every failure is safe to expose. A database exception becomes a generic 500
+problem; the traceback is logged. A missing task is ordinary control flow and
+does not produce an error log.
+
+\section{What the API deliberately omits}
+
+There are no users, projects, labels, attachments, authentication, authorization,
+soft deletion, synchronization, ETags, idempotency keys, or schema negotiation.
+Each could be valuable, but each introduces new resource and security decisions.
+The capstone stays focused on HTTP, framework flow, validation, SQL, and tests.
+
+\summarytitle
+
+The contract defines tasks, writable fields, collection and individual methods,
+filter/pagination rules, validation layers, and structured failures. PUT replaces,
+PATCH partially updates, POST creates, and DELETE removes. Implementation can now
+be judged against a stable design.
+
+\reviewtitle
+\begin{enumerate}
+  \item Why does POST return both a representation and Location?
+  \item What happens to omitted optional fields in PUT versus PATCH?
+  \item Why can offset pagination become inconsistent under concurrent inserts?
+  \item Which layer distinguishes malformed JSON from invalid task fields?
+\end{enumerate}
+
+\begin{exercise}[Contract examples]
+Write one complete request and response example for every endpoint, including
+headers and status. Add examples for every error class. These become documentation
+fixtures and integration-test candidates.
+\end{exercise}
+
+\begin{exercise}[Extend without coding]
+Design an optional \code{completed\_at} field. Define who writes it, how status
+transitions affect it, PUT/PATCH behavior, database constraints, filtering, and
+backward compatibility. Notice how one field crosses every layer.
+\end{exercise}
+

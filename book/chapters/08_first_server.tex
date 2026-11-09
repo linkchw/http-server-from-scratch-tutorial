@@ -1,0 +1,147 @@
+\chapter{The first server: one connection, one response}
+\chapterintro{The theory gate is complete. We now cross the operating-system boundary with the smallest server that can answer a real HTTP client. Its limitations are intentional and visible.}
+
+\begin{objectives}
+\begin{itemize}
+  \item Create, configure, bind, listen, accept, receive, send, and close a TCP socket.
+  \item Construct a byte-correct fixed HTTP/1.1 response.
+  \item Explain every resource lifetime in the first snapshot.
+  \item Observe why successful toy behavior is not yet a parser or framework.
+\end{itemize}
+\end{objectives}
+
+\section{Prepare the laboratory}
+
+Use Python 3.12 or newer. The examples use only the standard library. Work in
+the repository root, then enter the first snapshot directory. On Linux and
+macOS, the launcher is commonly \code{python3}; on Windows it may be \code{py}.
+
+\begin{wiremessage}
+cd code/stages/01_fixed_response
+python server.py
+\end{wiremessage}
+
+The process prints a loopback URL and waits. Open the URL in a browser, use an
+HTTP client, or create a connection in a second terminal. This snapshot exits
+after serving one accepted connection, so restart it for another attempt.
+
+\begin{securityboundary}
+Keep \code{HOST = "127.0.0.1"}. The first server has no timeouts, input limits,
+robust parser, concurrency policy, TLS, or authentication. Its purpose is to
+make the socket lifecycle concrete on one machine.
+\end{securityboundary}
+
+\section{Read the complete program}
+
+\codefile{../code/stages/01_fixed_response/server.py}
+
+The program is short enough to explain without abstraction.
+
+\subsection{Create and configure}
+
+\code{socket.socket(AF\_INET, SOCK\_STREAM)} is implicit in the snapshot's
+default constructor on common Python builds: IPv4 plus TCP. Later code states
+these arguments explicitly. The socket object owns an operating-system resource,
+so a \code{with} statement guarantees close when control leaves the block.
+
+\code{SO\_REUSEADDR} makes repeated local development starts less likely to fail
+because of recently used address state. It does not permit two ordinary listeners
+to share the same endpoint arbitrarily, and it is not a security feature.
+
+\subsection{Bind and listen}
+
+\code{bind((HOST, PORT))} selects the local endpoint. Another process already
+listening there normally causes an address-in-use error. Binding can also fail
+when the address is not local or policy forbids the port.
+
+\code{listen(1)} marks the socket as a listener. The numeric argument relates to
+queued connection attempts; it is not a maximum lifetime client count. Our later
+server uses a larger listen backlog plus a separate bounded application queue.
+
+\subsection{Accept and communicate}
+
+\code{accept()} blocks until a connection is available and returns a new socket
+plus the peer address. The listener and connection now have distinct jobs.
+The program receives some request bytes but does not interpret them. It sends a
+fixed response with \code{sendall}, closes the connection, then closes the
+listener as the process exits.
+
+\section{Constructing the response}
+
+The response has a status line, three fields, the blank line, and content:
+
+\begin{wiremessage}
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Content-Length: 32
+Connection: close
+
+Hello from a raw Python socket!
+\end{wiremessage}
+
+The source calculates the length from \code{BODY}. This matters even in a fixed
+example: editing content without editing a handwritten length would cause the
+client to wait for missing bytes or treat later bytes as a new message. The
+entire response is a \code{bytes} value before it reaches the socket.
+
+\begin{tryit}
+Change the body to include a non-ASCII word. Keep it as a UTF-8 byte literal by
+encoding a Python string before constructing the response. Compare character
+count with \code{len(body)}, which counts bytes. Do not hardcode the new length.
+\end{tryit}
+
+\section{Inspect rather than guess}
+
+An optional client such as \code{curl -v http://127.0.0.1:8080/} displays the
+request and response fields. If curl is unavailable, use the standard-library
+client later included in the project. Browser developer tools also show HTTP
+metadata, though a browser can add requests such as \code{/favicon.ico}.
+
+Record three views in the lab notebook:
+
+\begin{enumerate}
+  \item the source bytes we intend to send;
+  \item the server's printed peer endpoint;
+  \item the client's interpreted status, fields, and body.
+\end{enumerate}
+
+If they disagree, locate the boundary: Python construction, socket transfer, or
+HTTP interpretation.
+
+\section{What this program does not know}
+
+The server ignores method, target, version, Host, fields, and content. It assumes
+one receive is enough before replying. It has no error response, timeout, second
+client, or persistent connection. It would answer a random string with 200 OK.
+
+That is acceptable for one milestone because the limitation is named. The next
+stages replace assumptions one at a time. This incremental method is useful in
+systems work: keep a known-good end-to-end path while improving one boundary.
+
+\summarytitle
+
+The first server demonstrates the complete socket lifecycle and a valid fixed
+HTTP response. Resource ownership is explicit, output is bytes, body length is
+computed, and loopback limits exposure. It is a wire demonstration, not yet an
+HTTP implementation.
+
+\reviewtitle
+\begin{enumerate}
+  \item Why does accept return a new socket instead of using the listener for data?
+  \item What can cause bind to fail?
+  \item Why does the response calculate Content-Length from bytes?
+  \item Which invalid inputs would still receive 200 from this snapshot?
+\end{enumerate}
+
+\begin{exercise}[Predict before running]
+Before each experiment, predict the result: change the path, send POST, send an
+empty line instead of an HTTP request, connect and send nothing, and open two
+clients. Run only after writing predictions, then explain every mismatch.
+\end{exercise}
+
+\begin{exercise}[Resource lifetime]
+Draw the lifetime of listener and connection objects. Mark when the operating
+system owns queued connections, when Python owns a descriptor, and which
+\code{with} block guarantees each close.
+\end{exercise}
+

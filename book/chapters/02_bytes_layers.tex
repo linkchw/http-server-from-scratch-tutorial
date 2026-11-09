@@ -1,0 +1,180 @@
+\chapter{Bytes, encodings, and protocol layers}
+\chapterintro{Networks move finite sequences of bits. Every line of text, JSON value, header field, and database result must eventually cross a boundary as bytes.}
+
+\begin{objectives}
+\begin{itemize}
+  \item Distinguish bits, bytes, text, characters, and encodings.
+  \item Explain framing and why a receiver needs an unambiguous boundary rule.
+  \item Use layering and encapsulation without confusing the models with physical reality.
+  \item Distinguish packets, TCP segments, byte streams, and application messages.
+\end{itemize}
+\end{objectives}
+
+\section{A character is not a byte}
+
+A \term{bit} has two possible values. Eight bits form a \term{byte}, an integer
+from 0 through 255. A \term{character} is an abstract element of text. An
+\term{encoding} maps characters to bytes and bytes back to characters.
+
+ASCII assigns one byte to a small set of characters. UTF-8 represents every
+Unicode code point using one to four bytes and deliberately matches ASCII for
+the first 128 values. The word ``café'' has four characters but five UTF-8
+bytes because \code{é} uses two. Lengths in an HTTP message describe bytes, not
+Python characters.
+
+\begin{mentalmodel}
+Text does not travel through a socket. Bytes travel. Encoding is the contract
+used before sending; decoding is the matching operation after receiving. A
+protocol must state or imply that contract wherever text has meaning.
+\end{mentalmodel}
+
+In Python, \code{str} holds Unicode text and \code{bytes} holds byte values.
+Combining them implicitly would hide an encoding decision, so Python requires an
+explicit conversion. This apparent inconvenience prevents a large class of
+wire-format mistakes.
+
+\section{Framing creates messages}
+
+Suppose a sender writes the bytes for \code{HELLO} followed immediately by the
+bytes for \code{WORLD}. The receiver sees \code{HELLOWORLD}. Nothing inherent
+in that stream identifies two words. A protocol needs a \term{framing} rule.
+
+Common framing strategies include:
+
+\begin{itemize}
+  \item a delimiter, such as a newline ending a command;
+  \item a length prefix, such as a four-byte integer followed by that many bytes;
+  \item a fixed size, when every record occupies the same number of bytes;
+  \item connection close, where end-of-stream terminates the message;
+  \item self-describing chunks, each carrying its own length and a final marker.
+\end{itemize}
+
+HTTP/1.1 combines strategies. The header section uses a blank line delimiter.
+The body length can come from method/status semantics, \code{Content-Length},
+transfer coding, or closing a connection in limited circumstances. Correct
+framing is security-critical: if two recipients choose different boundaries,
+an attacker may make one request look like two.
+
+\begin{wireview}
+The notation below names bytes, not the four printable letters ``CRLF.''
+\begin{wiremessage}
+GET /health HTTP/1.1 CRLF
+Host: localhost CRLF
+CRLF
+\end{wiremessage}
+On the wire, each \code{CRLF} is the pair \code{0D 0A} in hexadecimal. The
+second consecutive pair ends the header section.
+\end{wireview}
+
+\section{Layers manage complexity}
+
+A layered model gives each protocol a focused job and a stable interface to the
+layer above it. The practical Internet stack is often described with four or
+five layers:
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}>{\bfseries}p{30mm} p{32mm} X@{}}
+\toprule
+Layer & Examples & Responsibility \\
+\midrule
+Application & HTTP, DNS, TLS & Meaning and rules used by applications \\
+Transport & TCP, UDP, QUIC & Communication between processes; reliability or datagrams \\
+Internet & IPv4, IPv6 & Addressing and forwarding across networks \\
+Link & Ethernet, Wi-Fi & Delivery on one local link \\
+Physical & Copper, fiber, radio & Signals that represent bits \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+The seven-layer OSI model remains useful vocabulary, but Internet implementations
+do not always fit its divisions exactly. TLS, for example, sits between an
+application protocol and a transport in common usage. Models help reasoning;
+they are not laws of nature.
+
+\section{Encapsulation and changing envelopes}
+
+When an application sends an HTTP request, each lower layer adds control
+information. TCP groups some stream bytes into segments with sequence-related
+metadata. IP carries a transport segment in a packet with source and destination
+addresses. A link carries the packet in a frame suitable for the next hop.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  layer/.style={draw=Rule,rounded corners=1mm,minimum width=115mm,
+                minimum height=10mm,align=center,font=\small\sffamily}
+]
+\node[layer,fill=PaperTint] (http) {HTTP message bytes};
+\node[layer,fill=PaperTint,below=3mm of http,minimum width=130mm] (tcp)
+  {TCP header \quad | \quad stream bytes};
+\node[layer,fill=PaperTint,below=3mm of tcp,minimum width=145mm] (ip)
+  {IP header \quad | \quad TCP segment};
+\node[layer,fill=PaperTint,below=3mm of ip,minimum width=158mm] (link)
+  {link header \quad | \quad IP packet \quad | \quad trailer};
+\draw[-{Latex},Accent] (http) -- (tcp);
+\draw[-{Latex},Accent] (tcp) -- (ip);
+\draw[-{Latex},Accent] (ip) -- (link);
+\end{tikzpicture}
+\caption{Conceptual encapsulation. Sizes are illustrative, not proportional.}
+\label{fig:encapsulation}
+\end{figure}
+
+At a router, the link envelope normally changes because the next link has new
+local addressing. The IP packet continues toward its destination, though fields
+such as the hop limit change. At the destination, layers remove and interpret
+their own metadata before delivering stream bytes to the application.
+
+\section{Packet boundaries are not message boundaries}
+
+The word ``packet'' is often used loosely. Be precise when precision matters:
+a link transmits frames, IP forwards packets, TCP transmits segments, and HTTP
+defines messages. These boundaries need not align. One HTTP header can span
+several TCP segments. Several short HTTP writes can be combined. One call to
+receive bytes can return half a line, exactly one request, or a request plus the
+beginning of the next request.
+
+TCP preserves order and detects missing data; it does not preserve the sender's
+write-call boundaries. Therefore a correct parser accumulates bytes and applies
+HTTP's framing rules. It never assumes one receive operation equals one message.
+
+\begin{pitfall}
+Testing only on localhost often hides fragmentation bugs. Local transfers are
+fast and may make a small request appear in one read. That outcome is permitted,
+not guaranteed. Later tests deliberately feed one byte at a time.
+\end{pitfall}
+
+\section{Numbers and byte order}
+
+Binary protocols must also agree how multi-byte numbers are ordered. Network
+protocols traditionally use big-endian, often called network byte order: the
+most significant byte comes first. HTTP/1.1's visible integers are decimal text,
+so \code{Content-Length: 12} is the ASCII sequence for the characters 1 and 2,
+not a binary integer. HTTP/2 and HTTP/3 use binary framing where byte order again
+becomes visible to implementers.
+
+\summarytitle
+
+Bytes are the common currency of network interfaces. Encodings give bytes text
+meaning; framing gives a stream message boundaries; layering gives complicated
+systems manageable interfaces. TCP is an ordered stream, not a message queue,
+so HTTP parsing must be incremental and boundary-aware.
+
+\reviewtitle
+\begin{enumerate}
+  \item Why can four characters require more than four bytes?
+  \item Name three framing strategies and one trade-off for each.
+  \item Why may a link-layer frame change at every router?
+  \item What outcomes are legal for a receive call after one HTTP request was sent?
+\end{enumerate}
+
+\begin{exercise}[Design a frame]
+Design a tiny protocol for sending a sequence of UTF-8 notes. Choose a framing
+strategy. Explain how the receiver detects an incomplete note, an empty note,
+and the end of the sequence. Then identify one malformed input it must reject.
+\end{exercise}
+
+\begin{exercise}[Count the bytes]
+For the texts \code{hello}, \code{café}, and a word in a language you use,
+record character count and UTF-8 byte count. Explain which count belongs in a
+length field that frames network bytes.
+\end{exercise}

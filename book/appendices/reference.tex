@@ -1,0 +1,188 @@
+\chapter{HTTP and framework quick reference}
+
+\section{Request and response shapes}
+
+\begin{wiremessage}
+METHOD /path?query=value HTTP/1.1
+Host: authority
+Field-Name: field value
+Content-Length: number-of-body-bytes
+
+optional body bytes
+\end{wiremessage}
+
+\begin{wiremessage}
+HTTP/1.1 200 OK
+Content-Type: application/json; charset=utf-8
+Content-Length: number-of-body-bytes
+Connection: keep-alive
+
+optional body bytes
+\end{wiremessage}
+
+Every displayed line ending above is CRLF. Exactly one empty line terminates the
+field section. Content-Length counts octets in the framed body.
+
+\section{Methods}
+
+\begin{longtable}{@{}>{\bfseries}p{20mm}p{20mm}p{24mm}p{83mm}@{}}
+\toprule
+Method & Safe & Idempotent & Meaning in this project \\
+\midrule
+\endhead
+GET & yes & yes & Retrieve collection, task, or health representation \\
+HEAD & yes & yes & GET fields without response content \\
+POST & no & no & Create a task under the collection \\
+PUT & no & yes & Replace all client-writable fields of one task \\
+PATCH & no & project-specific & Assign supplied fields of one task \\
+DELETE & no & yes & Remove one task \\
+OPTIONS & yes & yes & Return supported methods through Allow \\
+\bottomrule
+\end{longtable}
+
+\section{Statuses used}
+
+\begin{longtable}{@{}>{\bfseries}p{18mm}p{40mm}p{90mm}@{}}
+\toprule
+Code & Name & Use \\
+\midrule
+\endhead
+200 & OK & Successful retrieval or update with representation \\
+201 & Created & Task created; includes Location \\
+204 & No Content & Successful deletion or OPTIONS; no body \\
+400 & Bad Request & Malformed request, target, encoding, or JSON \\
+404 & Not Found & No route or task resource \\
+405 & Method Not Allowed & Path exists for other methods; includes Allow \\
+408 & Request Timeout & Partial request exceeded read timeout \\
+411 & Length Required & Body-required endpoint lacks Content-Length \\
+413 & Content Too Large & Declared body exceeds configured maximum \\
+414 & URI Too Long & Request line/target exceeds configured maximum \\
+415 & Unsupported Media Type & Endpoint requires application/json \\
+422 & Unprocessable Content & Task or query fields fail domain validation \\
+431 & Request Header Fields Too Large & Header bytes or field count exceeds limit \\
+500 & Internal Server Error & Unexpected application failure; detail hidden \\
+501 & Not Implemented & Method or transfer encoding is outside subset \\
+503 & Service Unavailable & Bounded connection queue is full \\
+505 & HTTP Version Not Supported & Request is not HTTP/1.1 \\
+\bottomrule
+\end{longtable}
+
+\section{Selected fields}
+
+\begin{longtable}{@{}>{\bfseries}p{37mm}p{111mm}@{}}
+\toprule
+Field & Role \\
+\midrule
+\endhead
+Host & Required target authority in HTTP/1.1 requests \\
+Content-Type & Media type of message content \\
+Content-Length & Decimal number of framed body bytes \\
+Transfer-Encoding & Transfer coding; explicitly rejected by this server \\
+Connection & Requests or announces close/keep-alive policy \\
+Allow & Methods supported for a resource \\
+Location & URI of created resource \\
+Date & Server response origination date \\
+Accept & Client preferences for response media types; explained, not negotiated here \\
+Authorization & Credentials under a scheme; not implemented \\
+Cache-Control & Cache directives; explained, not implemented \\
+ETag & Representation validator; proposed extension only \\
+\bottomrule
+\end{longtable}
+
+\section{Default server limits}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}>{\bfseries}X r@{}}
+\toprule
+Policy & Default \\
+\midrule
+Bind address & \code{127.0.0.1} \\
+Port & 8080 (zero allowed in tests) \\
+Workers & 16 \\
+Application queue & 64 connections \\
+Listen backlog & 128 \\
+Read/idle timeout & 5 seconds \\
+Requests per persistent connection & 100 \\
+Request line & 8 KiB \\
+Header section & 32 KiB \\
+Header fields & 100 \\
+Body & 1 MiB \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\section{Task endpoints}
+
+\begin{longtable}{@{}>{\ttfamily}p{48mm}p{28mm}p{74mm}@{}}
+\toprule
+Endpoint & Success & Result \\
+\midrule
+\endhead
+GET /health & 200 & \code{\{"status":"ok"\}} \\
+POST /tasks & 201 & Created task and Location \\
+GET /tasks & 200 & Filtered paginated collection \\
+GET /tasks/\{id\} & 200 & One task \\
+PUT /tasks/\{id\} & 200 & Fully replaced writable state \\
+PATCH /tasks/\{id\} & 200 & Partially updated state \\
+DELETE /tasks/\{id\} & 204 & No content \\
+\bottomrule
+\end{longtable}
+
+\section{Problem document}
+
+\begin{lstlisting}[style=wire]
+{
+  "type": "urn:task-api:problem:validation-error",
+  "title": "Validation failed",
+  "status": 422,
+  "detail": "One or more values failed validation.",
+  "instance": "/tasks",
+  "errors": {"title": "Must be a non-empty string."}
+}
+\end{lstlisting}
+
+\section{Framework public API}
+
+\begin{itemize}
+  \item \code{Headers(values)}, \code{add}, \code{set}, \code{remove},
+        \code{get}, \code{get\_all}, \code{copy}, \code{items};
+  \item Request message fields: \code{method}, \code{target}, \code{version},
+        \code{headers}, and \code{body};
+  \item Request routing helpers: \code{path}, \code{query}, \code{client},
+        \code{path\_params}, and \code{json()};
+  \item \code{Response(status, body, headers)}, \code{Response.json},
+        and \code{Response.problem};
+  \item \code{Application.route}, \code{add\_middleware}, and \code{handle};
+  \item \code{ServerConfig} and \code{Server.serve\_forever},
+        \code{wait\_until\_ready}, \code{shutdown};
+  \item \code{HTTPError(status, detail, code, title, errors, type\_uri)}.
+\end{itemize}
+
+\section{Parser decision sequence}
+
+\begin{enumerate}
+  \item Is a complete CRLF--CRLF header section buffered?
+  \item Are line and total header sizes within limits?
+  \item Are all line endings strict and request-line components valid?
+  \item Is the version exactly HTTP/1.1?
+  \item Are field names/values legal and exactly one Host present?
+  \item Is framing unambiguous and supported?
+  \item Is declared body size within limit and fully buffered?
+  \item Can origin-form target, percent encoding, path, and query be decoded?
+  \item Consume exactly one message and preserve the remainder.
+\end{enumerate}
+
+\section{Code review checklist}
+
+\begin{itemize}
+  \item Every network wait has a bound or documented owner.
+  \item Every allocated resource closes on success and failure.
+  \item Every input collection has size/count limits.
+  \item HTTP and JSON byte/text conversions name their encoding.
+  \item Framing ambiguity closes the connection.
+  \item Handlers return Response rather than touching sockets.
+  \item SQL structure is code-owned and values are bound parameters.
+  \item 500 responses reveal no internal exception detail.
+  \item Tests include fragments, combined messages, boundaries, and cleanup.
+  \item Documentation states unsupported features explicitly.
+\end{itemize}

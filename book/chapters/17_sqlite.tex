@@ -1,0 +1,142 @@
+\chapter{Persistence with SQLite}
+\chapterintro{The API needs durable state. SQLite gives the project transactions, constraints, indexes, and SQL without introducing a separate database server or an object-relational mapper.}
+
+\begin{objectives}
+\begin{itemize}
+  \item Translate the Task contract into a constrained relational schema.
+  \item Use parameterized statements and explicit transaction boundaries.
+  \item Separate database setup and repository operations from HTTP handlers.
+  \item Explain per-operation connections, WAL, busy timeout, and migration versioning.
+\end{itemize}
+\end{objectives}
+
+\section{Why SQLite fits the capstone}
+
+SQLite stores a relational database in a local file and runs in the application
+process. Python includes a DB-API interface. The intern can inspect real SQL,
+constraints, indexes, transactions, and concurrency behavior without installing
+or administering a database server.
+
+This convenience has a boundary. SQLite has one file-oriented write path and is
+not a drop-in architecture for every distributed, high-write service. Its
+strength here is visibility and low operational overhead.
+
+\section{Schema as durable validation}
+
+\codefile[language=SQL]{../code/final/task_api/schema.sql}
+
+The primary key assigns identity. NOT NULL and CHECK constraints protect required
+values even if a future handler forgets validation. Enum checks mirror the API
+allow-lists. Length checks provide a final bound. Indexes support filters by
+status, priority, and due date.
+
+The schema stores dates and UTC timestamps as consistently formatted text.
+Lexicographic ordering works for the chosen ISO forms. SQLite does not enforce a
+native date type here, so application validation remains necessary.
+
+\code{PRAGMA user\_version = 1} records schema version. Startup accepts a new
+version-zero database and initializes it, accepts version one, and refuses an
+unknown version. A real migration system would apply ordered, reversible or
+carefully forward-only changes and back up data as policy requires.
+
+\section{Parameterized SQL}
+
+Values never enter SQL through string interpolation. Statements contain
+\code{?} placeholders and pass values separately. The driver encodes each value
+as data rather than executable SQL syntax.
+
+Dynamic query structure still requires care. The list operation builds WHERE
+fragments only from code-owned strings and puts every client value in parameters.
+The update operation chooses column names from a fixed allow-list. Parameter
+binding cannot substitute table or column identifiers, so those must never come
+directly from a request.
+
+\begin{securityboundary}
+Escaping quotes manually is not a substitute for parameterization. It is easy to
+miss data types, encodings, wildcard semantics, or a future code path. Keep SQL
+structure controlled by code and values controlled by parameters.
+\end{securityboundary}
+
+\section{Connections and transactions}
+
+\code{Database.connect} creates a connection, configures rows by name, enables
+foreign-key enforcement for future schemas, and sets a five-second busy timeout.
+Each repository operation opens a connection in a context manager. Successful
+write blocks commit; exceptions roll back and close.
+
+Connections are not shared between worker threads. This avoids accidental
+cross-thread transaction state. The overhead is acceptable for a local teaching
+service and the ownership is obvious.
+
+WAL mode lets readers coexist better with a writer by appending changes to a
+write-ahead log before checkpointing. It does not permit unlimited simultaneous
+writes. The busy timeout allows short contention to resolve instead of failing
+immediately.
+
+\section{The database and repository code}
+
+\codefile{../code/final/task_api/database.py}
+
+The repository returns plain dictionaries matching the API representation. It
+does not import HTTP types. A missing row becomes \code{None} or \code{False};
+the handler decides that this means a 404 response.
+
+Create uses one INSERT then reads the committed representation. Get and delete
+are direct identifier operations. Replace names every writable column. Partial
+update builds assignments only from validated writable keys and always adds
+\code{updated\_at}.
+
+\section{Filtering, searching, and pagination}
+
+The list method accumulates code-owned predicates and parameters. Search treats
+\code{\%} and \code{\_} as literal characters by escaping their LIKE wildcard
+meaning. It issues one count query and one ordered page query with the same
+conditions.
+
+Ordering uses \code{created\_at DESC, id DESC}. The identifier breaks timestamp
+ties, producing deterministic pages for one database state. The count and page
+are separate statements, so a concurrent write can occur between them. A stricter
+snapshot would wrap both in one read transaction. This implementation accepts
+the small inconsistency and documents it.
+
+\section{Repository tests use temporary files}
+
+An in-memory SQLite database is normally private to one connection. Because the
+repository intentionally opens short-lived connections, tests use a temporary
+database file instead of \code{:memory:}. Each test case initializes a fresh file
+and deletes its temporary directory afterward. This mirrors connection behavior
+without sharing state between tests.
+
+\begin{pitfall}
+Do not put a production-like SQLite file inside a directory that tests delete,
+and do not point tests at the developer's real \code{tasks.db}. Test isolation
+is a data-safety property.
+\end{pitfall}
+
+\summarytitle
+
+SQLite supplies durable constraints and transactions behind a repository that
+does not know HTTP. Parameterized SQL separates code-owned structure from client
+values. Per-operation connections simplify thread ownership; WAL and busy timeout
+improve modest concurrency. Schema versioning makes compatibility explicit.
+
+\reviewtitle
+\begin{enumerate}
+  \item Which task rules are enforced both in Python and in SQL, and why?
+  \item Why can parameters replace values but not arbitrary column names?
+  \item Why do tests use a temporary file instead of a simple in-memory database?
+  \item What inconsistency can occur between list count and page queries?
+\end{enumerate}
+
+\begin{exercise}[Constraint failure]
+Bypass HTTP validation and call the repository with an invalid status. Observe
+the database constraint failure and transaction rollback. Explain why the HTTP
+layer should still validate first and return a controlled 422.
+\end{exercise}
+
+\begin{exercise}[Query plan]
+Populate tasks with several statuses and due dates. Use SQLite's query-plan
+inspection to see which filters can use indexes. Compare an exact status filter
+with a leading-wildcard text search and explain the difference.
+\end{exercise}
+

@@ -1,0 +1,171 @@
+\chapter{The HTTP semantic model}
+\chapterintro{HTTP is a family of stateless request/response protocols with shared semantics. First learn what a message means; the next chapter studies exactly how HTTP/1.1 writes it as bytes.}
+
+\begin{objectives}
+\begin{itemize}
+  \item Distinguish URI, origin, resource, representation, content, and field metadata.
+  \item Explain method safety, idempotency, and the major method semantics.
+  \item Interpret status-code classes without treating every 2xx or 4xx alike.
+  \item Explain stateless interaction and where application state still lives.
+\end{itemize}
+\end{objectives}
+
+\section{Messages carry intentions and results}
+
+An HTTP client sends a request that identifies a target and expresses an
+intention through a method, fields, and optional content. A server interprets
+that request with respect to a resource and returns one or more responses. A
+final response has a status code, fields, and optional content.
+
+HTTP separates a uniform interface from implementation details. A client does
+not need to know whether a task is stored in SQLite, computed from another
+service, or generated temporarily. The server does not need to know why the
+client wants it. This separation allows both sides to evolve behind the protocol
+boundary.
+
+\section{URI, origin, resource, representation}
+
+A URI identifies a resource. For HTTP and HTTPS, an \term{origin} is the tuple
+of scheme, host, and port after applying defaults. Thus
+\url{http://example.test/tasks} and
+\url{https://example.test/tasks} are different origins, even though their host
+and path text match.
+
+The resource is conceptual. Its current representation is a sequence of content
+bytes plus metadata describing how to interpret them. A JSON media type tells a
+recipient to process bytes as JSON; a character encoding connects text bytes to
+characters. Representation metadata can also describe language, compression,
+freshness, and validators.
+
+\section{Methods are semantics, not route names}
+
+The method token is case-sensitive and states the request's primary semantics.
+Standard method names are uppercase.
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}>{\bfseries}p{20mm} p{23mm} p{25mm} X@{}}
+\toprule
+Method & Safe & Idempotent & Intended meaning \\
+\midrule
+GET & yes & yes & Transfer a current representation \\
+HEAD & yes & yes & Same as GET without response content \\
+POST & no & no & Perform resource-specific processing \\
+PUT & no & yes & Replace the target's current representation \\
+PATCH & no & not guaranteed & Apply a described partial modification \\
+DELETE & no & yes & Remove the association with the target resource \\
+OPTIONS & yes & yes & Describe communication options \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\term{Safe} means the requested semantics are read-only; logging and accounting
+side effects can still occur. \term{Idempotent} means repeating the same request
+has the same intended effect as performing it once. It does not require byte-for-
+byte identical responses. A repeated DELETE can first return success and later
+return not found while the resource remains deleted.
+
+These properties guide retries. A client can often retry an idempotent operation
+after losing a connection without fearing duplicate intended effects. Retrying a
+POST that creates a charge or task may duplicate work unless the API adds an
+idempotency mechanism.
+
+\begin{pitfall}
+Using GET for a state-changing action because it is convenient violates method
+semantics. Crawlers, caches, link previewers, and retrying clients are entitled
+to treat GET as safe.
+\end{pitfall}
+
+\section{Status codes describe the result}
+
+The first digit groups status codes:
+
+\begin{itemize}
+  \item \textbf{1xx Informational}: an interim response before a final response;
+  \item \textbf{2xx Successful}: the request was received, understood, and accepted;
+  \item \textbf{3xx Redirection}: another step or a cached representation is involved;
+  \item \textbf{4xx Client Error}: the request cannot be fulfilled as sent;
+  \item \textbf{5xx Server Error}: the server failed to fulfill an apparently valid request.
+\end{itemize}
+
+Choose the specific code that communicates the outcome. \status{200 OK} commonly
+carries a representation. \status{201 Created} identifies a newly created
+resource, usually with a \code{Location} field. \status{204 No Content} reports
+success without content. \status{400 Bad Request} means malformed or invalid
+request syntax at a broad level; \status{404 Not Found} hides or reports absence;
+\status{405 Method Not Allowed} means the resource exists for other methods and
+should include \code{Allow}. \status{415 Unsupported Media Type} rejects the
+content format. \status{422 Unprocessable Content} can report semantically invalid
+fields. \status{500 Internal Server Error} is not a license to reveal a traceback.
+
+\section{Fields modify or describe messages}
+
+HTTP fields are named metadata. Names are case-insensitive; values follow
+field-specific syntax. Some fields can appear more than once or contain lists,
+so blindly storing every name in a one-value dictionary loses information.
+
+Examples include:
+
+\begin{itemize}
+  \item \code{Host}, which identifies the target authority in HTTP/1.1;
+  \item \code{Content-Type}, which describes content media type;
+  \item \code{Content-Length}, which participates in HTTP/1.1 framing;
+  \item \code{Accept}, which expresses response representation preferences;
+  \item \code{Authorization}, which carries credentials under a chosen scheme;
+  \item \code{Cache-Control}, which gives cache directives;
+  \item \code{Location}, which identifies a created or redirect target.
+\end{itemize}
+
+Fields are not all interchangeable strings. Their individual semantics determine
+whether whitespace, combination, repetition, and ordering matter.
+
+\section{Stateless does not mean no state}
+
+HTTP is stateless in the sense that each request can be understood without an
+implicit transport conversation state defining its meaning. Application state
+still exists in databases, caches, and clients. A client can send a cookie or
+authorization credential on each relevant request, making context explicit in
+the request.
+
+Persistent TCP connections are a performance mechanism, not an application
+session. Two requests on one connection should not secretly mean different
+things merely because of their connection order, unless a protocol extension
+explicitly defines such state.
+
+\section{Content versus representation}
+
+Modern HTTP specifications use \term{content} for the bytes after transfer
+codings have been removed. In HTTP/1.1, chunk boundaries are message framing;
+they are not part of the content delivered to an application. Likewise, TLS
+records protect transport bytes but are not part of the HTTP representation.
+
+This distinction keeps semantics consistent across versions. HTTP/2 uses binary
+frames and HTTP/3 uses QUIC streams, but a GET, status 404, media type, and cache
+directive retain shared meaning.
+
+\summarytitle
+
+HTTP gives resources a uniform request/response interface. Methods express
+intentions and properties such as safety and idempotency. Status codes communicate
+results. Fields carry typed metadata. Representations transfer resource state,
+while HTTP's stateless model keeps each request independently meaningful.
+
+\reviewtitle
+\begin{enumerate}
+  \item Why are a resource and its JSON representation different things?
+  \item How can an idempotent request return different responses when repeated?
+  \item What distinguishes 404 from 405?
+  \item Why is a persistent TCP connection not an application session?
+\end{enumerate}
+
+\begin{exercise}[Method audit]
+Choose methods for creating, reading, replacing, partially updating, and deleting
+a task. For each, state whether an automatic retry is generally safe and which
+application-specific caveat remains.
+\end{exercise}
+
+\begin{exercise}[Choose the result]
+Choose and justify status codes for: successful creation, successful deletion
+with no body, malformed JSON, an unknown task, a known path with the wrong
+method, an unsupported media type, invalid task fields, and an unexpected
+database failure.
+\end{exercise}

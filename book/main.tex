@@ -1,0 +1,47 @@
+\documentclass[11pt,a4paper,twoside,openany]{memoir}
+\input{metadata}
+\input{style}
+
+\begin{document}
+\frontmatter
+\input{frontmatter}
+\tableofcontents*
+
+\mainmatter
+\part{Foundations: from electricity to HTTP semantics}
+\input{chapters/01_request_journey}
+\input{chapters/02_bytes_layers}
+\input{chapters/03_addressing_dns}
+\input{chapters/04_tcp_sockets}
+\input{chapters/05_http_model}
+\input{chapters/06_http11}
+\input{chapters/07_web_architecture}
+
+\part{Building an HTTP server from raw sockets}
+\input{chapters/08_first_server}
+\input{chapters/09_receiving_bytes}
+\input{chapters/10_parsing_requests}
+\input{chapters/11_responses}
+\input{chapters/12_routing}
+\input{chapters/13_json_errors_middleware}
+\input{chapters/14_concurrency_lifecycle}
+\input{chapters/15_framework}
+
+\part{From server to backend REST API}
+\input{chapters/16_rest_design}
+\input{chapters/17_sqlite}
+\input{chapters/18_task_api}
+\input{chapters/19_testing_hardening}
+\input{chapters/20_production_bridge}
+
+\appendix
+\part{Appendices}
+\input{appendices/setup}
+\input{appendices/reference}
+\input{appendices/solutions}
+\input{appendices/glossary}
+
+\backmatter
+\input{references}
+\end{document}
+

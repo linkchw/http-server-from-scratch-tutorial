@@ -1,0 +1,195 @@
+\usepackage{fontspec}
+\setmainfont{Noto Serif}
+\setsansfont{Noto Sans}
+\setmonofont{JetBrains Mono}[Scale=MatchLowercase]
+
+\usepackage[english]{babel}
+\usepackage{microtype}
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{listings}
+\usepackage[most]{tcolorbox}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,backgrounds,calc,fit,matrix,positioning,shapes.geometric}
+\usepackage{xcolor}
+\usepackage{xurl}
+\usepackage{hyperref}
+\usepackage{bookmark}
+\usepackage[capitalise,noabbrev]{cleveref}
+\usepackage{needspace}
+
+\definecolor{Ink}{HTML}{20252B}
+\definecolor{Muted}{HTML}{66717D}
+\definecolor{Accent}{HTML}{315F78}
+\definecolor{AccentDark}{HTML}{214457}
+\definecolor{Rule}{HTML}{CBD3D8}
+\definecolor{PaperTint}{HTML}{F5F7F8}
+\definecolor{WarmTint}{HTML}{F8F4EC}
+\definecolor{DangerTint}{HTML}{F8EEEE}
+\definecolor{CodeBg}{HTML}{F3F5F6}
+\definecolor{CodeKeyword}{HTML}{315F78}
+\definecolor{CodeString}{HTML}{496B3E}
+\definecolor{CodeComment}{HTML}{75808A}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=AccentDark,
+  citecolor=AccentDark,
+  urlcolor=Accent,
+  pdftitle={\BookTitle: \BookSubtitle},
+  pdfsubject={Networking, HTTP/1.1, Python sockets, and REST API development},
+  pdfauthor={Mentoring Edition},
+  pdfkeywords={HTTP, Python, sockets, REST, networking, backend}
+}
+
+\setstocksize{297mm}{210mm}
+\settrimmedsize{\stockheight}{\stockwidth}{*}
+\setlrmarginsandblock{28mm}{22mm}{*}
+\setulmarginsandblock{23mm}{28mm}{*}
+\setheadfoot{7mm}{10mm}
+\setheaderspaces{10mm}{*}{*}
+\checkandfixthelayout
+
+\linespread{1.09}
+\setlength{\parindent}{1.2em}
+\setlength{\parskip}{0.15em}
+\setlength{\emergencystretch}{3em}
+\raggedbottom
+\clubpenalty=10000
+\widowpenalty=10000
+\displaywidowpenalty=10000
+
+\setsecnumdepth{subsection}
+\settocdepth{subsection}
+\setpnumwidth{3em}
+\setrmarg{4em}
+\setbeforesecskip{-2.4ex plus -0.5ex minus -0.2ex}
+\setaftersecskip{1.1ex plus 0.2ex}
+\setbeforesubsecskip{-2ex plus -0.4ex minus -0.2ex}
+\setaftersubsecskip{0.8ex plus 0.2ex}
+
+\makeatletter
+\makechapterstyle{httpbook}{
+  \renewcommand{\chapnamefont}{\normalfont\sffamily\small\color{Accent}\MakeUppercase}
+  \renewcommand{\chapnumfont}{\normalfont\sffamily\fontsize{42}{42}\selectfont\color{Rule}}
+  \renewcommand{\chaptitlefont}{\normalfont\sffamily\bfseries\fontsize{25}{30}\selectfont\color{Ink}}
+  \renewcommand{\printchaptername}{\chapnamefont\@chapapp}
+  \renewcommand{\printchapternum}{\raggedleft\chapnumfont\thechapter}
+  \renewcommand{\afterchapternum}{\par\vskip-1.5em\hrule\vskip1.5em}
+  \renewcommand{\printchaptertitle}[1]{\chaptitlefont ##1}
+  \renewcommand{\afterchaptertitle}{\par\vskip2.2em}
+}
+\makeatother
+\chapterstyle{httpbook}
+
+\makepagestyle{httpbook}
+\makeevenhead{httpbook}{\small\sffamily\color{Muted}\thepage}{}{\small\sffamily\color{Muted}\leftmark}
+\makeoddhead{httpbook}{\small\sffamily\color{Muted}\rightmark}{}{\small\sffamily\color{Muted}\thepage}
+\makeevenfoot{httpbook}{}{}{}
+\makeoddfoot{httpbook}{}{}{}
+\makeheadrule{httpbook}{\textwidth}{0.3pt}
+\pagestyle{httpbook}
+\aliaspagestyle{chapter}{empty}
+
+\lstdefinestyle{pythonbook}{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{CodeKeyword}\bfseries,
+  stringstyle=\color{CodeString},
+  commentstyle=\color{CodeComment}\itshape,
+  backgroundcolor=\color{CodeBg},
+  rulecolor=\color{Rule},
+  frame=single,
+  framerule=0.4pt,
+  framesep=6pt,
+  numbers=left,
+  numberstyle=\tiny\color{Muted},
+  numbersep=8pt,
+  showstringspaces=false,
+  keepspaces=true,
+  columns=fullflexible,
+  breaklines=true,
+  breakatwhitespace=false,
+  postbreak=\mbox{\textcolor{Muted}{$\hookrightarrow$}\space},
+  tabsize=4,
+  upquote=true,
+  aboveskip=1.2em,
+  belowskip=1.2em
+}
+\lstdefinestyle{wire}{
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{CodeBg},
+  frame=single,
+  rulecolor=\color{Rule},
+  framerule=0.4pt,
+  framesep=7pt,
+  showstringspaces=false,
+  columns=fullflexible,
+  breaklines=true,
+  aboveskip=1.2em,
+  belowskip=1.2em
+}
+\lstset{style=pythonbook}
+\lstnewenvironment{wiremessage}{\lstset{style=wire}}{}
+
+\newtcolorbox{objectives}{
+  enhanced, breakable, colback=PaperTint, colframe=Rule,
+  boxrule=0.5pt, arc=1mm, left=3mm, right=3mm, top=2mm, bottom=2mm,
+  title={Learning objectives}, fonttitle=\sffamily\bfseries, coltitle=Ink
+}
+\newtcolorbox{mentalmodel}{
+  enhanced, breakable, colback=PaperTint, colframe=Accent,
+  borderline west={2pt}{0pt}{Accent}, boxrule=0pt, arc=0pt,
+  title={Mental model}, fonttitle=\sffamily\bfseries, coltitle=AccentDark
+}
+\newtcolorbox{wireview}{
+  enhanced, breakable, colback=PaperTint, colframe=Rule,
+  boxrule=0.4pt, arc=1mm, title={On the wire},
+  fonttitle=\sffamily\bfseries, coltitle=AccentDark
+}
+\newtcolorbox{pitfall}{
+  enhanced, breakable, colback=WarmTint, colframe=Rule,
+  borderline west={2pt}{0pt}{Muted}, boxrule=0pt, arc=0pt,
+  title={Pitfall}, fonttitle=\sffamily\bfseries, coltitle=Ink
+}
+\newtcolorbox{securityboundary}{
+  enhanced, breakable, colback=DangerTint, colframe=Rule,
+  borderline west={2pt}{0pt}{AccentDark}, boxrule=0pt, arc=0pt,
+  title={Security boundary}, fonttitle=\sffamily\bfseries, coltitle=Ink
+}
+\newtcolorbox{tryit}{
+  enhanced, breakable, colback=white, colframe=Accent,
+  boxrule=0.6pt, arc=1mm, title={Try it},
+  fonttitle=\sffamily\bfseries, coltitle=AccentDark
+}
+\newcounter{exercise}[chapter]
+\renewcommand{\theexercise}{\thechapter.\arabic{exercise}}
+\newenvironment{exercise}[1][]
+  {\refstepcounter{exercise}\begin{tcolorbox}[
+    enhanced,breakable,colback=white,colframe=Rule,boxrule=0.5pt,arc=1mm,
+    title={Exercise \theexercise\ifx\relax#1\relax\else: #1\fi},
+    fonttitle=\sffamily\bfseries,coltitle=Ink]}
+  {\end{tcolorbox}}
+\newenvironment{checkpoint}
+  {\begin{tcolorbox}[enhanced,breakable,colback=PaperTint,colframe=Accent,
+    boxrule=0.6pt,arc=1mm,title={Checkpoint},fonttitle=\sffamily\bfseries,
+    coltitle=AccentDark]}
+  {\end{tcolorbox}}
+
+\newcommand{\chapterintro}[1]{\begin{quote}\large\color{Muted}#1\end{quote}\vspace{1em}}
+\newcommand{\term}[1]{\textbf{#1}}
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\method}[1]{\textsf{\bfseries #1}}
+\newcommand{\status}[1]{\textsf{#1}}
+\newcommand{\filepath}[1]{\texttt{#1}}
+\newcommand{\codefile}[2][]{\lstinputlisting[style=pythonbook,#1]{#2}}
+\newcommand{\summarytitle}{\section*{Chapter summary}\addcontentsline{toc}{section}{Chapter summary}}
+\newcommand{\reviewtitle}{\section*{Review questions}\addcontentsline{toc}{section}{Review questions}}
+
+\setlist[itemize]{topsep=0.45em,itemsep=0.25em,parsep=0pt,leftmargin=1.5em}
+\setlist[enumerate]{topsep=0.45em,itemsep=0.3em,parsep=0pt,leftmargin=1.7em}
+\setlist[description]{style=multiline,leftmargin=42mm,labelwidth=39mm,
+  labelsep=3mm,topsep=0.45em,itemsep=0.3em}

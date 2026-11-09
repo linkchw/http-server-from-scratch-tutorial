@@ -1,0 +1,184 @@
+\chapter{Addresses, ports, routing, and DNS}
+\chapterintro{A server is reachable only when several names and numbers agree: the hostname, IP address, transport port, listening socket, and route.}
+
+\begin{objectives}
+\begin{itemize}
+  \item Explain the roles of IP addresses, transport ports, and socket endpoints.
+  \item Distinguish loopback, private, public, unspecified, and wildcard addresses.
+  \item Describe recursive DNS resolution and caching at a practical level.
+  \item Explain routing and NAT without attributing application semantics to them.
+\end{itemize}
+\end{objectives}
+
+\section{IP identifies an interface location}
+
+An IP address identifies a network interface in a routing context. IPv4 writes
+32 bits as four decimal octets, for example \code{192.0.2.10}. IPv6 uses 128
+bits and hexadecimal groups, allowing compressed forms such as \code{2001:db8::10}.
+The documentation ranges used here are reserved for examples and should not be
+treated as real destinations.
+
+An address is not a permanent identity for a person, application, or physical
+machine. Interfaces can have several addresses; addresses can change; load
+balancers can advertise one address for many servers; a mobile device can move
+between networks. HTTP uses host and origin concepts above this layer precisely
+because an IP address alone does not identify an application resource namespace.
+
+\subsection{Address scopes that matter in the lab}
+
+\begin{itemize}
+  \item \code{127.0.0.1} is IPv4 loopback. Traffic stays inside the local host.
+  \item \code{::1} is IPv6 loopback.
+  \item Private IPv4 ranges are used inside networks and are not globally routed.
+  \item Public addresses can be globally reachable subject to routing and policy.
+  \item \code{0.0.0.0} used while binding means all local IPv4 interfaces; it is
+        not a remote destination to which a client should normally connect.
+\end{itemize}
+
+Binding our server to loopback is a safety decision. A process listening on
+\code{127.0.0.1:8080} is reachable by local clients but not directly through the
+machine's other interfaces. Binding the same process to \code{0.0.0.0:8080}
+may expose it to a local network, a container bridge, or more, depending on
+firewall and routing rules.
+
+\section{Ports identify transport endpoints}
+
+An IP address gets traffic to a host interface. A 16-bit TCP or UDP port helps
+the operating system deliver it to a transport endpoint. Port numbers range
+from 0 through 65535. Ports below 1024 are commonly treated as privileged on
+Unix-like systems. HTTP conventionally uses 80 and HTTPS 443, while development
+servers often choose unprivileged ports such as 8000 or 8080.
+
+A TCP connection is identified by protocol plus a four-tuple: local address,
+local port, remote address, and remote port. This explains how a listening
+server can support many clients on the same local port. Each accepted connection
+has a different remote endpoint, and clients normally use temporary source ports.
+
+\begin{mentalmodel}
+The listening socket is a reception desk at one address and port. Accepting a
+connection creates a separate conversation socket. The desk remains available
+for new arrivals while workers handle existing conversations.
+\end{mentalmodel}
+
+\section{Routing chooses the next hop}
+
+Hosts and routers maintain routing tables. A route associates an address prefix
+with an outgoing interface and possibly a next-hop router. The most specific
+matching prefix wins. If no more specific route exists, a default route usually
+points toward a gateway.
+
+Routers forward IP packets hop by hop. They do not establish one end-to-end
+physical wire and do not need HTTP paths. Different packets can in principle
+take different routes. IP makes a best effort; TCP above it recovers from loss
+and reordering for applications that require a reliable stream.
+
+\section{NAT rewrites addressing context}
+
+Network Address Translation is common at boundaries between private and public
+networks. A gateway can map many internal address-and-port pairs to one public
+address with distinct ports. It records the mapping so reply traffic can be
+directed back to the correct internal endpoint.
+
+NAT is not a substitute for an application security policy, and it is not part
+of HTTP. It changes the network view of endpoints. This can complicate inbound
+connections, logging, and the interpretation of client addresses. Reverse
+proxies add another layer: an application may see the proxy's TCP address while
+the original address is described in a trusted HTTP field.
+
+\section{DNS maps names to data}
+
+The Domain Name System is a distributed, hierarchical database. A hostname can
+have IPv4 address records (A), IPv6 address records (AAAA), aliases (CNAME), and
+many other record types. DNS does not test whether an HTTP server is healthy; it
+returns configured data and associated cache lifetimes.
+
+A typical client asks a \term{recursive resolver}. The resolver may already
+have a cached answer. Otherwise it follows delegations: root servers direct it
+toward a top-level domain, those servers direct it toward authoritative servers,
+and an authoritative server supplies the requested record. The resolver caches
+answers according to their time-to-live values and returns them to the client.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  box/.style={draw=Rule,fill=PaperTint,rounded corners=1mm,
+              minimum width=30mm,minimum height=10mm,font=\small\sffamily},
+  arrow/.style={-{Latex[length=2mm]},Accent}
+]
+\node[box] (client) {client};
+\node[box,right=10mm of client] (resolver) {recursive resolver};
+\node[box,above right=8mm and 12mm of resolver] (root) {root};
+\node[box,right=12mm of resolver] (tld) {TLD};
+\node[box,below right=8mm and 12mm of resolver] (auth) {authoritative};
+\draw[arrow] (client) -- node[above,font=\scriptsize]{question} (resolver);
+\draw[arrow] (resolver) -- (root);
+\draw[arrow] (resolver) -- (tld);
+\draw[arrow] (resolver) -- (auth);
+\draw[arrow,dashed] (resolver) -- node[below,font=\scriptsize]{cached answer} (client);
+\end{tikzpicture}
+\caption{A simplified recursive lookup. Referrals and replies are condensed.}
+\label{fig:dns-resolution}
+\end{figure}
+
+\subsection{Why DNS answers vary}
+
+DNS can return several addresses for redundancy or geographic distribution.
+Different resolvers may have differently aged caches. A deployment can change
+records, but old answers remain valid until their TTLs expire. A failed new
+server therefore does not always affect every client at once, and a fixed DNS
+record does not immediately repair clients holding an older answer.
+
+\section{Names return at the HTTP layer}
+
+After DNS, the hostname still matters. One IP address can host many HTTP origins.
+In HTTP/1.1 the client sends a \code{Host} field so the server or reverse proxy
+can select the intended origin. For HTTPS, the hostname is also used during TLS
+identity verification and commonly during server-name negotiation. Replacing a
+hostname with its address can therefore change both TLS and HTTP behavior.
+
+\begin{pitfall}
+``It pings'' does not prove an HTTP service works. Ping commonly uses ICMP, not
+TCP port 8080, TLS, or HTTP. It can be blocked when HTTP works, or succeed when
+no application is listening.
+\end{pitfall}
+
+\section{A disciplined diagnostic order}
+
+When a server cannot be reached, ask questions from lower ambiguity to higher:
+
+\begin{enumerate}
+  \item What exact hostname, address, and port did the client choose?
+  \item Did name resolution return the expected address family and address?
+  \item Does the host have a route toward that destination?
+  \item Is the server process listening on the intended local address and port?
+  \item Do firewall or namespace boundaries permit the connection?
+  \item Did TCP connect? If so, continue to TLS and HTTP evidence.
+\end{enumerate}
+
+\summarytitle
+
+Addresses locate interfaces for IP forwarding; ports locate transport endpoints;
+DNS maps names to configured data; routing chooses next hops; NAT translates
+endpoint views. A server becomes reachable only when these mechanisms agree
+with its bind address and the client's chosen destination.
+
+\reviewtitle
+\begin{enumerate}
+  \item Why can many TCP clients share a server's port 8080?
+  \item What is the practical difference between binding to loopback and to a wildcard address?
+  \item Why might two clients temporarily receive different DNS answers for one name?
+  \item Why can replacing a hostname with its IP address break HTTPS?
+\end{enumerate}
+
+\begin{exercise}[Endpoint inventory]
+For a local development server, write the listening endpoint, one possible
+client endpoint, and the resulting four-tuple. Repeat for two simultaneous
+clients and underline what changes.
+\end{exercise}
+
+\begin{exercise}[Resolution narrative]
+Narrate an uncached DNS lookup from a laptop to an authoritative answer. Then
+repeat the story when every relevant answer is cached. Identify which network
+round trips disappear.
+\end{exercise}
+

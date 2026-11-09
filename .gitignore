@@ -1,0 +1,46 @@
+# Python bytecode and tooling caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local databases created while following the book
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# LaTeX build products (the approved PDF in dist/ is intentionally tracked)
+book/*.aux
+book/*.bbl
+book/*.bcf
+book/*.blg
+book/*.fdb_latexmk
+book/*.fls
+book/*.lof
+book/*.log
+book/*.lot
+book/*.out
+book/*.pdf
+book/*.run.xml
+book/*.synctex.gz
+book/*.toc
+book/*.xdv
+
+# Editors and operating systems
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~

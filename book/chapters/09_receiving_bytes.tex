@@ -1,0 +1,135 @@
+\chapter{Receiving bytes without inventing boundaries}
+\chapterintro{A correct server must tolerate a header arriving in any number of pieces. We replace the single-read assumption with an explicit buffer, delimiter search, and limit.}
+
+\begin{objectives}
+\begin{itemize}
+  \item Accumulate partial reads until an HTTP header delimiter is complete.
+  \item Treat connection close before completion as a protocol error.
+  \item Enforce a cumulative byte limit rather than relying on receive-buffer size.
+  \item Identify the bytes that belong after the header section.
+\end{itemize}
+\end{objectives}
+
+\section{The tempting incorrect version}
+
+A common first implementation calls \code{recv(4096)} and parses the result as
+one request. The number 4096 is a maximum returned by that call, not a promise
+that the peer's complete message fits or arrives together. A valid request can
+be split after any byte.
+
+Another incorrect version loops until a receive returns fewer than 4096 bytes.
+A short read does not mark a message boundary. It only describes what was
+available at that moment. The client can send more later.
+
+HTTP supplies the header boundary: \code{b"\\r\\n\\r\\n"}. Therefore the
+algorithm accumulates until it finds that exact sequence.
+
+\section{The buffered snapshot}
+
+\codefile{../code/stages/02_buffered_request/server.py}
+
+The \code{bytearray} is mutable, so extending it does not create a new bytes
+object on every receive. Each loop iteration has four possible outcomes:
+
+\begin{enumerate}
+  \item the delimiter is already present and the loop stops;
+  \item more bytes arrive and are appended;
+  \item an empty result reports end-of-stream before completion;
+  \item the cumulative size exceeds the configured limit.
+\end{enumerate}
+
+After finding the delimiter, the function returns through its end. Notice a
+design flaw that is acceptable only at this stage: bytes after the delimiter
+are discarded. Those bytes might be a request body or the next request. Chapter
+10 introduces a persistent incremental parser whose buffer survives and consumes
+exactly one framed message.
+
+\begin{pitfall}
+The receive chunk size and protocol limit solve different problems. A 4 KiB
+chunk is an I/O choice. A 32 KiB header limit is a policy applied to the total
+accumulated header. Increasing one does not correctly implement the other.
+\end{pitfall}
+
+\section{End-of-stream is data about the stream}
+
+When \code{recv} returns \code{b""}, the peer has performed an orderly close in
+that direction. If the parser has no buffered bytes, the connection ended
+between requests. If it has the beginning of a request, the message is incomplete
+and should not be dispatched.
+
+A reset or other socket error follows a different exception path. In both cases
+the application must stop treating the stream as a source of a valid request.
+There is no invented ``best effort'' completion.
+
+\section{Delimiter search and strict CRLF}
+
+Searching for the correct delimiter finds a candidate header end. A strict parser
+must still reject bare line feeds or stray carriage returns inside the start and
+field lines. Merely finding one correct final delimiter does not make every
+earlier line correct.
+
+Why be strict? Tolerant recipients often tolerate different things. If a reverse
+proxy treats a bare newline as a boundary while the origin does not, their stream
+interpretations diverge. Strictness reduces the space of ambiguous inputs.
+
+\section{Timeouts belong beside byte limits}
+
+A size limit stops a peer that sends too much. It does not stop a peer that sends
+one permitted byte every minute. A read timeout limits how long a worker waits
+for progress or for the next request. Later, each connected socket receives a
+five-second timeout and incomplete timed-out requests receive 408 when practical.
+
+Timeout values express a service policy. Too short rejects legitimate slow
+clients; too long preserves resources for abusive or failed clients. Production
+systems coordinate timeouts across proxies, application servers, and upstream
+dependencies.
+
+\begin{tryit}
+Use a tiny client or interactive TCP tool to type a request slowly. Observe that
+stage 2 waits because it has no timeout. Then mentally apply the final policy:
+after five seconds without completion, close the connection and release the
+worker.
+\end{tryit}
+
+\section{Design the next buffer}
+
+The final parser needs an operation with different ownership:
+
+\begin{itemize}
+  \item \code{feed(data)} appends newly received bytes and applies early limits;
+  \item \code{pop\_request()} returns one complete request or \code{None};
+  \item parsed bytes are removed, while later bytes remain;
+  \item parser state belongs to one connection, not one receive call.
+\end{itemize}
+
+This API separates I/O from syntax. Unit tests can feed fragments without opening
+a real socket. The server loop can ask for another chunk only when the parser
+reports that the current buffer is incomplete.
+
+\summarytitle
+
+Receive operations expose stream availability, not HTTP boundaries. A correct
+reader accumulates bytes, searches for protocol delimiters, handles early close,
+and enforces cumulative limits and timeouts. It must preserve bytes beyond one
+message for later parsing.
+
+\reviewtitle
+\begin{enumerate}
+  \item Why is a short receive not an end-of-message signal?
+  \item What is wrong with discarding bytes after the header delimiter?
+  \item Which attacks are addressed by byte limits and which by timeouts?
+  \item Why should parser state belong to a connection?
+\end{enumerate}
+
+\begin{exercise}[Fragment table]
+Take a small GET request and divide it at every possible byte boundary. For each
+division, show the buffer before and after the second fragment. The parsing
+result must be identical for every division.
+\end{exercise}
+
+\begin{exercise}[Limit placement]
+Explain where to enforce request-line, total-header, field-count, and body limits.
+For each, state the earliest moment the server has enough information to reject
+the request without waiting for more bytes.
+\end{exercise}
+

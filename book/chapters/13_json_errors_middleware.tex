@@ -1,0 +1,135 @@
+\chapter{JSON, error boundaries, and middleware}
+\chapterintro{A backend framework becomes useful when handlers can work with structured content, expected failures become consistent responses, and cross-cutting behavior can wrap every route.}
+
+\begin{objectives}
+\begin{itemize}
+  \item Validate media type and UTF-8 before decoding JSON.
+  \item Separate malformed content, invalid domain values, and unexpected failures.
+  \item Compose middleware around a terminal router handler.
+  \item Preserve a clear request-to-response data flow.
+\end{itemize}
+\end{objectives}
+
+\section{JSON is one layer, not the wire protocol}
+
+JSON parsing begins only after HTTP framing produces exact body bytes. The request
+helper verifies that \code{Content-Type} names \code{application/json}, decodes
+UTF-8, then calls the standard-library JSON parser. These failures have different
+causes:
+
+\begin{itemize}
+  \item wrong or missing media type: 415;
+  \item invalid UTF-8: 400;
+  \item malformed JSON grammar: 400;
+  \item valid JSON with wrong task fields: 422;
+\end{itemize}
+
+A JSON number, list, string, or null is syntactically valid. A Task endpoint
+requires an object, so domain validation must still check the top-level type.
+
+\section{A transitional application layer}
+
+Stage 6 demonstrates JSON factories, a terminal dispatcher, and timing middleware
+in one file:
+
+\codefile{../code/stages/06_json_middleware/server.py}
+
+The lambda defaults in \code{compose} are deliberate. Python closures capture
+variables by reference; binding each current middleware and next handler as a
+default prevents every wrapper from later referring to the final loop values.
+The final \code{Application} uses a named wrapper with the same idea for clarity.
+
+\section{Middleware is nested control flow}
+
+Given middleware A and B, request flow is:
+
+\begin{wiremessage}
+A before
+  B before
+    route handler
+  B after
+A after
+\end{wiremessage}
+
+Each middleware receives a request and the next handler. It may modify the request
+within documented bounds, return early, call the next handler once, inspect or
+replace the response, or translate an expected exception. Logging, request IDs,
+authentication, CORS, compression, and metrics are common examples, though not
+all belong in this small project.
+
+Order matters. An exception-recovery layer must surround code whose exceptions
+it catches. A timing layer must begin before and finish after its measured work.
+An authentication layer placed after a handler is not authentication.
+
+\section{The final application boundary}
+
+\codefile{../code/final/tinyhttp/application.py}
+
+\code{Application.handle} is the safe public boundary. It rejects unsupported
+methods, composes middleware, dispatches the route, verifies that handlers return
+a Response, converts \code{HTTPError}, and catches unexpected exceptions.
+
+Expected errors carry status, public detail, a stable machine code, optional
+field errors, and a problem type URI. Unexpected exceptions are logged through
+the standard \code{logging} package and become a generic 500 document. The catch
+is broad only at this outer boundary; inner code should catch only errors it can
+handle meaningfully.
+
+\begin{securityboundary}
+Never return \code{str(exception)} for an unexpected error. SQLite exceptions,
+filesystem errors, and programmer mistakes can expose paths, schema details, or
+secrets. Give clients a stable generic problem and give operators the traceback
+through controlled logging.
+\end{securityboundary}
+
+\section{Stable errors are part of the API}
+
+Clients should branch on status and stable problem type/code, not English prose.
+The Task API uses a type such as
+\code{urn:task-api:problem:validation-error} and includes an \code{errors} object
+for individual fields. The prose remains useful to humans and may improve over
+time without breaking client logic.
+
+The \code{instance} identifies the request path associated with the occurrence.
+In a larger system it could be a traceable occurrence URI, but it must not leak
+private identifiers or internal topology.
+
+\section{Observability without coupling}
+
+The server access log records client address, method, target, status, response
+bytes, and elapsed time. Application logs record unexpected failures. These are
+different perspectives. A request ID middleware could connect them, but this
+book avoids inventing a distributed tracing system.
+
+Do not log complete request bodies by default. Bodies may contain credentials,
+personal data, or large values. Log structure and identifiers deliberately,
+with retention and access policy in mind.
+
+\summarytitle
+
+JSON decoding validates media type, encoding, and syntax before domain rules.
+Expected failures become structured problem responses; unexpected failures stay
+private. Middleware wraps the terminal dispatcher in a visible order and is the
+framework's tool for reusable cross-cutting behavior.
+
+\reviewtitle
+\begin{enumerate}
+  \item Why is a valid JSON list still invalid for task creation?
+  \item What changes when two middleware functions exchange order?
+  \item Why should clients not branch on an English error sentence?
+  \item Which request data is dangerous to log by default?
+\end{enumerate}
+
+\begin{exercise}[Error taxonomy]
+For twelve failures spanning HTTP syntax, JSON, task fields, missing tasks, SQL,
+and programmer errors, choose the layer that owns detection, public status, stable
+problem code, and whether a traceback is logged.
+\end{exercise}
+
+\begin{exercise}[Request ID middleware]
+Design middleware that accepts a syntactically safe incoming request ID or
+generates one, places it on the response, and makes it available to logs. Define
+length and character limits and explain why arbitrary input must not be copied
+into logs or fields.
+\end{exercise}
+

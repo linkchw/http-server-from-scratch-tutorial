@@ -1,0 +1,161 @@
+\chapter{From learning server to production ecosystem}
+\chapterintro{Building the stack makes mature web infrastructure less magical. It should also make us humble: production systems solve a broader, continuously changing problem.}
+
+\begin{objectives}
+\begin{itemize}
+  \item Explain the roles of WSGI, ASGI, production servers, frameworks, and reverse proxies.
+  \item Identify the authentication, deployment, observability, and operations work omitted here.
+  \item Transfer low-level lessons to everyday backend development.
+  \item Complete a final assessment and choose safe next projects.
+\end{itemize}
+\end{objectives}
+
+\section{What frameworks no longer hide}
+
+When a mature framework gives a request object, you now know the work behind it:
+stream reads, framing, syntax, field normalization, limits, target parsing, routing,
+content decoding, exception boundaries, and response serialization. When a
+production server exposes worker and timeout settings, you can connect them to
+capacity and slow-client behavior rather than treating them as arbitrary knobs.
+
+This knowledge changes debugging. A 400 before application logs suggests an
+earlier parser or proxy. A 405 differs from a missing route. A hanging client can
+indicate missing length or an incomplete stream. A database error belongs after
+valid HTTP and domain input.
+
+\section{WSGI and ASGI}
+
+WSGI defines a synchronous interface between Python web servers and applications.
+The server handles network protocol work and calls an application with request
+environment data; the application returns status, fields, and body iterable.
+It enabled portable synchronous applications across many servers.
+
+ASGI generalizes the boundary for asynchronous and long-lived interactions. An
+ASGI application receives a connection scope and exchanges event messages through
+\code{receive} and \code{send} callables. It supports HTTP, WebSocket, lifespan
+events, and asynchronous application work.
+
+Neither interface is ``HTTP itself.'' They are Python application/server contracts
+above protocol parsing. Our \code{Application.handle(Request) -> Response} is a
+smaller educational boundary with similar separation but no compatibility claim.
+
+\section{A typical production path}
+
+A deployment might place these responsibilities in layers:
+
+\begin{enumerate}
+  \item edge network and firewall absorb or filter unwanted traffic;
+  \item load balancer or reverse proxy terminates TLS, enforces limits, and routes;
+  \item production WSGI/ASGI server manages processes, workers, timeouts, and protocol details;
+  \item framework supplies routing, validation integration, middleware, and application tools;
+  \item application implements resource and authorization rules;
+  \item database/cache/message systems provide durable or shared state;
+  \item logs, metrics, traces, alerts, deployment, backups, and incident processes operate it.
+\end{enumerate}
+
+Each boundary has timeout and size policy. If an outer proxy allows a 100 MiB
+body while an inner service allows 1 MiB, rejection occurs later after wasting
+bandwidth. If an inner timeout exceeds every outer timeout, work can continue
+after the client has already received a gateway error. Production configuration
+is an end-to-end design.
+
+\section{Authentication and authorization}
+
+Authentication establishes a principal; authorization decides what that principal
+may do. Adding users safely requires choices about password hashing, multi-factor
+authentication, account recovery, session or token lifetime, revocation, CSRF,
+credential storage, TLS, rate limiting, audit, privacy, and authorization at
+resource boundaries.
+
+Use established framework and identity-system capabilities. Do not hash passwords
+with a fast general-purpose hash, invent token signatures, store secrets in source,
+or trust identity fields from untrusted proxies. Even a correct cryptographic
+primitive can be assembled into an insecure authentication system.
+
+\section{Observability and operations}
+
+Access logs answer individual request questions. Metrics reveal rates, latency
+distributions, saturation, queue depth, error classes, and dependency health.
+Traces connect work across services. Alerts should correspond to user impact and
+actionable operator decisions.
+
+Operations also includes reproducible builds, dependency updates, vulnerability
+response, configuration management, least privilege, secret rotation, database
+migrations, backups, restore tests, capacity planning, rolling deploys, rollback,
+and incident learning. A server is not production-ready merely because it answers
+requests quickly in a benchmark.
+
+\section{Safe next projects}
+
+Good continuations preserve one learning question at a time:
+
+\begin{itemize}
+  \item implement chunked request decoding with a written grammar and adversarial tests;
+  \item add TLS only through Python's established \code{ssl} module and local certificates,
+        studying verification rather than implementing cryptography;
+  \item adapt the Task application to WSGI, comparing boundaries with tinyhttp;
+  \item adapt it to ASGI and measure slow concurrent clients;
+  \item add conditional updates using ETag and \code{If-Match};
+  \item replace offset pagination with a documented stable cursor;
+  \item run the API behind a local reverse proxy and trace forwarded metadata trust.
+\end{itemize}
+
+Do not expose \code{tinyhttp} publicly as the next project. The goal is transfer
+of understanding to maintained tools, not a new production server ecosystem.
+
+\section{Final assessment}
+
+The intern should complete four demonstrations without copying prose:
+
+\begin{enumerate}
+  \item On a whiteboard, trace an HTTPS Task POST from URL to DNS, TCP/TLS, HTTP,
+        parser, router, validation, transaction, and response.
+  \item Starting from a blank file, create a one-response socket server and then
+        describe every missing property required for the final subset.
+  \item Diagnose five supplied failures using wire bytes, logs, status, and tests,
+        locating the owning layer before changing code.
+  \item Extend the Task API with one read-only aggregate endpoint, including
+        contract, repository method, handler, unit tests, network test, and docs.
+\end{enumerate}
+
+Assessment emphasizes explanation and evidence. A working patch without a clear
+boundary model is incomplete; an elegant explanation without tested bytes is
+also incomplete.
+
+\section{The central lesson}
+
+An HTTP backend is a sequence of contracts. Bytes become a framed message;
+syntax becomes typed internal state; paths and methods become a resource
+operation; untrusted values become validated data; a transaction becomes durable
+state; a response value becomes bytes again. Reliability comes from making each
+contract explicit, bounded, testable, and honest about what it does not support.
+
+\summarytitle
+
+WSGI, ASGI, mature servers, frameworks, proxies, identity systems, and operational
+platforms divide responsibilities that our small project exposes directly.
+Low-level understanding improves everyday design and debugging, while production
+readiness requires maintained implementations and organizational processes far
+beyond a successful local API.
+
+\reviewtitle
+\begin{enumerate}
+  \item At what layer do WSGI and ASGI sit relative to HTTP parsing?
+  \item Why must timeout policy be coordinated across proxies and applications?
+  \item What work turns authentication from a token check into a system?
+  \item Which tinyhttp lessons transfer directly to a mature framework?
+\end{enumerate}
+
+\begin{exercise}[Production comparison]
+Choose one maintained Python framework and production server. Map their request,
+response, routing, middleware, worker, limit, timeout, and shutdown concepts to
+tinyhttp. Cite official documentation and identify capabilities with no tinyhttp
+equivalent.
+\end{exercise}
+
+\begin{exercise}[Capstone retrospective]
+Write a two-page engineering note: three assumptions you held before the book,
+three experiments that changed your model, the most security-sensitive parser
+decision, and the production boundary you would defend most strongly in review.
+\end{exercise}
+

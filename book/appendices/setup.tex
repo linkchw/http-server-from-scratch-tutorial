@@ -1,0 +1,174 @@
+\chapter{Setup and troubleshooting}
+
+\section{Required tools}
+
+The runnable code requires Python 3.12 or newer. The PDF build additionally
+requires XeLaTeX, \code{latexmk}, and the Noto Serif, Noto Sans, and JetBrains
+Mono fonts. No third-party Python package is required.
+
+Confirm Python:
+
+\begin{wiremessage}
+python --version
+\end{wiremessage}
+
+On systems where \code{python} refers to an older interpreter, try
+\code{python3}. On Windows, the Python Launcher commonly uses \code{py -3.12} or
+newer. Use the same launcher consistently in later commands.
+
+\section{Optional virtual environment}
+
+There are no packages to install, but a virtual environment can keep tooling
+habits consistent.
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}>{\bfseries}p{32mm} X X@{}}
+\toprule
+Task & Linux/macOS shell & Windows PowerShell \\
+\midrule
+Create & \code{python -m venv .venv} & \code{py -m venv .venv} \\
+Activate & \code{source .venv/bin/activate} & \path{.venv\Scripts\Activate.ps1} \\
+Deactivate & \code{deactivate} & \code{deactivate} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+If PowerShell execution policy blocks activation, the environment can still be
+used by invoking \path{.venv\Scripts\python.exe} directly. Do not weaken a
+machine-wide policy merely for this project.
+
+\section{Repository map}
+
+\begin{itemize}
+  \item \filepath{book}: LaTeX source and generated build intermediates;
+  \item \filepath{code/stages}: nine frozen learning milestones and snapshot tests;
+  \item \filepath{code/final/tinyhttp}: reusable educational framework;
+  \item \filepath{code/final/task\_api}: SQLite application and CLI;
+  \item \filepath{code/final/tests}: parser, application, API, and socket tests;
+  \item \filepath{dist}: approved compiled PDF;
+  \item \filepath{build.py}: cross-platform test/build helper.
+\end{itemize}
+
+\section{Run tests}
+
+From the repository root:
+
+\begin{wiremessage}
+python build.py test
+\end{wiremessage}
+
+To isolate suites:
+
+\begin{wiremessage}
+cd code/stages
+python -m unittest discover -s tests -v
+
+cd ../final
+python -m unittest discover -s tests -v
+\end{wiremessage}
+
+Local socket tests may be restricted in a sandboxed development environment.
+Grant only loopback-test capability; do not disable unrelated security controls.
+
+\section{Build the book}
+
+\begin{wiremessage}
+python build.py book
+\end{wiremessage}
+
+The helper runs \code{latexmk -xelatex}, inspects the log for undefined references
+and overfull boxes, and copies the final artifact to
+\filepath{dist/build-http-from-scratch.pdf}. Use \code{python build.py all} for
+tests plus PDF. Use \code{python build.py clean} to remove generated LaTeX files
+and the distribution PDF.
+
+The manuscript uses \code{listings}, not \code{minted}; shell escape and Pygments
+are unnecessary. Code listings are read directly from the runnable source, so
+the relative directory structure must remain intact.
+
+\section{Run the API}
+
+\begin{wiremessage}
+cd code/final
+python -m task_api --database tasks.db
+\end{wiremessage}
+
+Useful options:
+
+\begin{wiremessage}
+python -m task_api --host 127.0.0.1 --port 9000 \
+  --database practice.db --workers 4 --no-keep-alive
+\end{wiremessage}
+
+The backslash line continuation is for a Unix-like shell. In PowerShell, put the
+command on one line or use its backtick continuation carefully. The options are
+otherwise identical.
+
+Stop with Ctrl+C. The database file and possible \code{-wal}/\code{-shm} companion
+files belong to the running SQLite database. Stop the process before moving or
+deleting a practice database.
+
+\section{Common failures}
+
+\subsection{Address already in use}
+
+Another process is listening on the selected port, or a previous process is
+still running. Choose another port or stop the exact process you started. Do not
+kill unrelated processes by a broad name match.
+
+\subsection{Connection refused}
+
+Confirm the server printed its listening URL, the client uses the same address
+family and port, and the process has not exited with a traceback. A server bound
+to loopback cannot be reached through another machine's network address.
+
+\subsection{Client waits forever}
+
+Inspect response framing. A wrong Content-Length can make a client wait for bytes
+that will never arrive. In learning snapshots without timeouts, a server may also
+wait for an incomplete request delimiter.
+
+\subsection{400 invalid Host}
+
+Raw HTTP/1.1 requests must contain exactly one nonempty Host field. Standard
+clients add it automatically. When using a raw socket, include
+\code{Host: localhost} followed by CRLF.
+
+\subsection{411 on POST, PUT, or PATCH}
+
+Body-required Task endpoints require Content-Length. Standard HTTP clients
+usually calculate it when given bytes. A raw client must calculate the UTF-8 byte
+length, not character count.
+
+\subsection{415 Unsupported Media Type}
+
+Set \code{Content-Type: application/json}. An \code{Accept} field describes the
+desired response and does not describe the request body.
+
+\subsection{SQLite database is locked}
+
+Stop stray API processes using the file. Keep transactions short. The repository
+configures a busy timeout, but a long-held external transaction can exceed it.
+Do not edit the database with a tool that leaves a write transaction open.
+
+\subsection{Font or LaTeX error}
+
+Confirm XeLaTeX can locate all three configured fonts and that the TeX distribution
+contains memoir, fontspec, TikZ, tcolorbox, listings, hyperref, bookmark, and
+cleveref. The local build intentionally avoids automatic network installation.
+
+\section{A debugging worksheet}
+
+For any failure, record:
+
+\begin{enumerate}
+  \item exact command and current directory;
+  \item Python and tool versions;
+  \item selected hostname/address/port;
+  \item raw request start line, fields, and declared body length;
+  \item first observed error, status, or traceback;
+  \item earliest layer that could produce that evidence;
+  \item smallest reproducible case and one falsifiable next hypothesis.
+\end{enumerate}
+
+This worksheet prevents random edits and preserves evidence for mentor review.

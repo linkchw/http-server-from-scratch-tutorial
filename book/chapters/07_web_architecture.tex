@@ -1,0 +1,180 @@
+\chapter{Web architecture, REST, and security boundaries}
+\chapterintro{A useful HTTP server lives in an ecosystem of TLS terminators, proxies, caches, clients, and standards. This chapter completes the theory gate and defines exactly what we will build.}
+
+\begin{objectives}
+\begin{itemize}
+  \item Explain forward proxies, reverse proxies, gateways, and caches.
+  \item Describe TLS goals and the trust decisions behind HTTPS.
+  \item Apply REST constraints to a resource-oriented API without treating REST as a synonym for JSON.
+  \item Compare HTTP/1.1, HTTP/2, and HTTP/3 at a conceptual level.
+  \item State the supported, rejected, and explanation-only features of the project.
+\end{itemize}
+\end{objectives}
+
+\section{Intermediaries are normal}
+
+HTTP was designed to pass through intermediaries. A \term{forward proxy} is
+selected on behalf of a client. A \term{reverse proxy} accepts traffic on behalf
+of origin applications. A \term{gateway} translates or fronts another system.
+A \term{cache} reuses stored responses when protocol rules allow.
+
+A reverse proxy may terminate TLS, enforce request limits, authenticate users,
+balance traffic, compress responses, and forward a simpler request to an
+application server. This is a common production boundary. It does not excuse
+the application from validating inputs, and it creates a trust question: fields
+such as a forwarded client address are meaningful only when set or sanitized by
+a trusted intermediary.
+
+\section{Caching changes the path}
+
+A cache can answer a request without contacting the origin. Cache keys, freshness
+lifetimes, validators, request directives, response directives, and method/status
+rules determine whether reuse is valid. An \code{ETag} validator can support a
+conditional GET; if the stored representation is still current, the origin can
+return \status{304 Not Modified} without the representation content.
+
+Caching is not implemented in \code{tinyhttp}, but it is important to API design.
+Unsafe methods should invalidate relevant stored responses. Personalized data
+must not accidentally become shared. A backend developer must understand that a
+response can affect later requests even after its connection closes.
+
+\section{What TLS provides}
+
+TLS wraps a transport connection to provide confidentiality, integrity, and
+authenticated server identity when certificates are validated correctly. During
+the handshake, peers negotiate cryptographic parameters, the server presents a
+certificate chain, and the client checks trust, hostname, validity, and policy.
+The handshake establishes keys used to protect application data.
+
+TLS does not make a vulnerable application safe. It protects data in transit
+between TLS peers. An authorized client can still send malicious input; an
+application can still expose secrets in a response; decrypted data still exists
+at endpoints. Certificate verification is essential---encryption to an
+unverified attacker is not the intended security property of HTTPS.
+
+Our learning server does not implement cryptography and does not terminate TLS.
+Production deployments normally place an established TLS implementation and
+production server or proxy in front of application code.
+
+\section{REST as an architectural style}
+
+REST is not ``HTTP plus JSON'' and not a route naming convention. Its constraints
+include client--server separation, stateless requests, cacheability, a uniform
+interface, a layered system, and optional code-on-demand. The uniform interface
+includes identification of resources, manipulation through representations,
+self-descriptive messages, and hypermedia as the engine of application state.
+
+Many practical APIs use several REST ideas without implementing mature
+hypermedia. This book will be precise: the Task API is resource-oriented and
+uses HTTP semantics carefully, but it does not claim every possible REST
+maturity property.
+
+\subsection{Model nouns before endpoints}
+
+The core collection resource is \code{/tasks}; an individual task is
+\code{/tasks/\{id\}}. Methods carry operations, so paths do not become
+\code{/createTask} or \code{/deleteTask}. Representations contain task fields.
+Filters and pagination refine the collection request rather than inventing a
+new verb-shaped endpoint.
+
+Statelessness means every request carries what the server needs to interpret it.
+Database state persists tasks, but the meaning of PATCH does not depend on a
+secret sequence of prior requests on the same TCP connection.
+
+\section{Input is hostile until proven otherwise}
+
+Security is an end-to-end property. The server will enforce:
+
+\begin{itemize}
+  \item strict message syntax and unambiguous framing;
+  \item finite line, field, body, time, worker, and queue limits;
+  \item header-value validation to prevent response splitting;
+  \item media-type and UTF-8 checks before JSON parsing;
+  \item allow-lists, lengths, types, and formats for task fields;
+  \item parameterized SQL rather than string interpolation;
+  \item generic 500 responses while logging internal exceptions;
+  \item loopback binding by default.
+\end{itemize}
+
+Authentication is intentionally absent. A toy password or static token can
+teach unsafe habits if mistaken for a deployable identity system. The security
+chapter explains where authentication and authorization belong and why they
+need established password hashing, token/session policy, secret management,
+revocation, TLS, and audit design.
+
+\section{Why newer HTTP versions exist}
+
+HTTP/1.1 can reuse connections but concurrent requests often require several
+connections, and ordered responses can delay later work. HTTP/2 retains HTTP
+semantics while using binary frames and multiplexed streams on one connection.
+It compresses fields using HPACK. Packet loss still affects the underlying TCP
+connection, even if application streams are independent at the HTTP layer.
+
+HTTP/3 maps HTTP semantics to QUIC, which runs over UDP and provides encrypted,
+multiplexed streams with loss recovery. Loss affecting one QUIC stream need not
+block delivery on unrelated streams in the same way TCP ordering can. QPACK
+handles field compression under these constraints.
+
+We implement HTTP/1.1 because a human can inspect its wire messages and because
+it makes framing visible. We do not pretend the same parser can be adapted to
+HTTP/2 by adding a condition; the binary framing and connection machinery are
+different implementations of shared semantics.
+
+\section{The implementation contract}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}>{\bfseries}p{30mm} X X@{}}
+\toprule
+Category & Included & Boundary \\
+\midrule
+Protocol & HTTP/1.1 origin-form, Host, Content-Length, core methods, HEAD/OPTIONS, persistent sequential requests & Other versions rejected \\
+Framework & request/response types, multivalue fields, router, middleware, problem responses & No templates, static files, cookies, sessions, or dependency injection \\
+Transport & IPv4 loopback TCP, bounded blocking workers, timeouts, clean shutdown & No TLS, IPv6 listener, event loop, or production tuning \\
+Content & UTF-8 JSON with 1 MiB request limit & Chunking, streaming, compression, ranges, and negotiation explained but not implemented \\
+Backend & SQLite Task CRUD, validation, filtering, pagination, transactions & No accounts, authentication, or distributed database \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+An explicit boundary makes the project honest. Unsupported features receive a
+clear error rather than accidental behavior. The final production bridge will
+show how WSGI, ASGI, mature servers, reverse proxies, and frameworks address
+broader needs.
+
+\begin{checkpoint}
+Before Part II, you should be able to explain, without code, how a URL becomes
+an HTTP request; why TCP has no request boundary; how HTTP/1.1 finds the end of
+a length-framed body; why methods and status codes have semantics; and which
+features our strict subset rejects. If one explanation is vague, revisit the
+relevant chapter before implementing its parser.
+\end{checkpoint}
+
+\summarytitle
+
+HTTP systems include trusted and untrusted intermediaries, caches, TLS, and
+multiple protocol versions. REST supplies architectural constraints, not a JSON
+branding label. The server we build has a deliberately strict contract: enough
+HTTP/1.1 for a meaningful backend, explicit limits, and clear production
+boundaries.
+
+\reviewtitle
+\begin{enumerate}
+  \item When may a reverse proxy field describing client identity be trusted?
+  \item Why does TLS not replace application input validation?
+  \item Which REST constraint is violated by hidden per-connection application state?
+  \item Why is HTTP/2 not simply HTTP/1.1 with more headers?
+\end{enumerate}
+
+\begin{exercise}[Theory gate]
+On one page, diagram a POST from a client to the future Task API through DNS,
+TCP, an optional TLS proxy, HTTP parsing, routing, validation, SQLite, and the
+response. Label every byte/text conversion and every trust boundary.
+\end{exercise}
+
+\begin{exercise}[Feature classification]
+Classify each as implemented, explicitly rejected, or explanation-only:
+\code{Content-Length}, chunked request bodies, GET, HTTP/2, TLS, repeated ordinary
+fields, duplicate Content-Length, JSON, authentication, and keep-alive. Explain
+why each boundary is visible rather than silent.
+\end{exercise}
+

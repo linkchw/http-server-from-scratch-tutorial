@@ -1,0 +1,77 @@
+\chapter{Glossary}
+
+\begin{description}
+\item[Accept] Create a connected socket from a listening socket's pending connection.
+\item[Address] A network-layer locator associated with an interface and routing context.
+\item[Application server] A process that hosts application code behind a defined interface.
+\item[ASGI] Asynchronous Server Gateway Interface for Python applications and servers.
+\item[Backlog] An operating-system limit/hint for pending connections to a listener.
+\item[Backpressure] Mechanisms that prevent producers from overwhelming finite consumers.
+\item[Bind] Associate a socket with a local address and port.
+\item[Body] HTTP/1.1 message bytes after the field-section delimiter, as framed by rules.
+\item[Byte] Eight bits; the unit exposed by Python socket reads and writes.
+\item[Cache] Component that stores responses for protocol-governed reuse.
+\item[Client] The role that initiates a request in an interaction.
+\item[Connection] Stateful transport relationship between endpoints.
+\item[Content] HTTP message data after transfer coding is removed.
+\item[Content negotiation] Selecting a representation using request preferences and availability.
+\item[CRLF] Carriage return followed by line feed, bytes 13 and 10.
+\item[CRUD] Create, read, update, delete; a data-operation mnemonic, not an HTTP specification.
+\item[Datagram] A message-oriented transport unit, as exposed by UDP.
+\item[DNS] Distributed hierarchical Domain Name System.
+\item[Endpoint] An address and transport port, plus protocol context.
+\item[Encoding] Mapping between abstract information such as text and bytes.
+\item[Field] Named HTTP metadata with field-specific syntax and semantics.
+\item[Flow control] Sender control intended to avoid overwhelming the receiver.
+\item[Forward proxy] Intermediary selected on behalf of a client.
+\item[Frame] A bounded protocol unit; often specifically a link-layer unit.
+\item[Framing] Rules that locate message boundaries in bytes.
+\item[Gateway] Intermediary that fronts or translates another system.
+\item[Handler] Application callable that turns a Request into a Response.
+\item[Header section] Start-line-following HTTP field lines ending at an empty line.
+\item[Host] HTTP/1.1 field identifying target authority.
+\item[HTTP] Stateless application-level request/response protocol family.
+\item[HTTPS] HTTP whose communication is secured for the HTTPS origin rules, commonly with TLS.
+\item[Idempotent] Having the same intended effect when repeated as when performed once.
+\item[Intermediary] Proxy, gateway, cache, or tunnel participant between endpoints.
+\item[IP] Internet Protocol, responsible for addressed packet forwarding.
+\item[JSON] Text data-interchange syntax used for Task representations.
+\item[Keep-alive] Reuse of a connection for more than one HTTP exchange.
+\item[Latency] Elapsed delay across a defined operation or path.
+\item[Listener] Socket configured to accept incoming transport connections.
+\item[Loopback] Host-internal network path, represented by 127.0.0.1 or ::1.
+\item[Media type] Identifier describing the format/nature of content.
+\item[Method] Case-sensitive HTTP token expressing request semantics.
+\item[Middleware] Callable that wraps downstream request handling.
+\item[NAT] Translation of network addresses and often ports across routing contexts.
+\item[Origin] Scheme, host, and port tuple governing an HTTP resource namespace.
+\item[Packet] Network-layer unit forwarded by IP.
+\item[Parameterization] Supplying SQL values separately from statement structure.
+\item[Parser] Component that validates and transforms wire syntax into structured state.
+\item[Port] Sixteen-bit transport identifier used in TCP/UDP endpoints.
+\item[Problem details] Structured HTTP error representation standardized by RFC 9457.
+\item[Protocol] Shared rules for communication between independent participants.
+\item[Representation] Transferable current or intended state of a resource plus metadata.
+\item[Resource] Conceptual target identified by a URI.
+\item[REST] Architectural style with constraints including uniform interface and statelessness.
+\item[Reverse proxy] Intermediary accepting traffic on behalf of origin applications.
+\item[Route] Mapping from method/path shape to a handler.
+\item[Router] Component that resolves requests against registered routes.
+\item[Safe method] Method whose defined semantics are read-only.
+\item[Segment] Common name for a TCP protocol data unit; also a path component by context.
+\item[Server] Role that accepts requests and produces responses.
+\item[Socket] Operating-system interface/object for network communication.
+\item[Stateless] Requiring each request to carry the context needed for its interpretation.
+\item[Status code] Three-digit HTTP response result code.
+\item[Stream] Ordered sequence of bytes without application message boundaries.
+\item[TCP] Reliable ordered byte-stream transport protocol.
+\item[TLS] Protocol providing protected channels and authenticated identity under verification.
+\item[Transaction] Group of database operations committed atomically or rolled back.
+\item[URI] Uniform Resource Identifier.
+\item[URL] URI that identifies a resource through a scheme with access semantics.
+\item[UTF-8] Variable-length Unicode encoding compatible with ASCII for its first 128 values.
+\item[Validation] Checking data against the grammar and rules owned by a layer.
+\item[WAL] SQLite write-ahead logging mode.
+\item[Worker] Execution unit handling queued connections or requests.
+\item[WSGI] Synchronous Python Web Server Gateway Interface.
+\end{description}

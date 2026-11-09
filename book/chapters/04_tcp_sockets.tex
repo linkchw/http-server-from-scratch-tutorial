@@ -1,0 +1,181 @@
+\chapter{TCP streams and the socket interface}
+\chapterintro{TCP turns unreliable packet delivery into an ordered stream between two endpoints. Sockets are the operating-system interface through which our Python process joins that stream.}
+
+\begin{objectives}
+\begin{itemize}
+  \item Explain connection establishment, ordered delivery, acknowledgments, and closing.
+  \item Distinguish reliability, flow control, congestion control, and application timeouts.
+  \item Describe listening and connected sockets and the bind--listen--accept lifecycle.
+  \item Predict partial reads, partial writes, blocking, and slow-client behavior.
+\end{itemize}
+\end{objectives}
+
+\section{A reliable byte stream}
+
+TCP provides two applications with an ordered, bidirectional sequence of bytes.
+It numbers bytes conceptually, detects loss, retransmits data, removes duplicates,
+and delivers data to the receiving application in order. If a later segment
+arrives before an earlier one, the implementation normally waits rather than
+showing the application a gap.
+
+Reliability does not mean success is guaranteed. A cable can remain disconnected,
+a process can crash, or a peer can stop reading forever. TCP either continues
+trying within its policies or reports failure. Applications still need deadlines,
+cancellation, and error handling.
+
+\section{Establishing a connection}
+
+The familiar three-way handshake synchronizes connection state and initial
+sequence numbers:
+
+\begin{enumerate}
+  \item The client sends a segment with the SYN flag.
+  \item The server replies with SYN and ACK.
+  \item The client acknowledges the server's SYN.
+\end{enumerate}
+
+The handshake also negotiates capabilities. It costs a network round trip before
+ordinary application data can flow, which is one reason connection reuse matters.
+A server's listening socket and backlog participate before application code
+accepts the established connection.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  actor/.style={font=\sffamily\bfseries},
+  msg/.style={-{Latex[length=2mm]},Accent}
+]
+\node[actor] (client) {client};
+\node[actor,right=105mm of client] (server) {server};
+\draw[Rule] (client.south) -- ++(0,-50mm);
+\draw[Rule] (server.south) -- ++(0,-50mm);
+\draw[msg] ([yshift=-12mm]client.south) -- node[above,font=\small]{SYN} ([yshift=-12mm]server.south);
+\draw[msg] ([yshift=-25mm]server.south) -- node[above,font=\small]{SYN + ACK} ([yshift=-25mm]client.south);
+\draw[msg] ([yshift=-38mm]client.south) -- node[above,font=\small]{ACK} ([yshift=-38mm]server.south);
+\end{tikzpicture}
+\caption{A simplified TCP three-way handshake.}
+\label{fig:tcp-handshake}
+\end{figure}
+
+\section{Sequence, acknowledgment, and retransmission}
+
+A TCP acknowledgment says, roughly, ``I have received all bytes before this
+next expected sequence number.'' Senders keep unacknowledged data so it can be
+retransmitted. They infer loss through timers and duplicate acknowledgment
+patterns. Checksums detect corruption within their scope.
+
+The application does not receive these segments directly. It writes bytes to a
+socket buffer and reads bytes from another buffer. TCP can split one write into
+many segments or combine data from several writes. Network offload mechanisms
+make the relationship even less visible. The application must treat the result
+as a stream.
+
+\section{Two kinds of control}
+
+\term{Flow control} protects the receiver. The receiver advertises how much
+buffer capacity is available; a sender that ignores this would overwhelm the
+destination. \term{Congestion control} protects the network path. The sender
+adjusts how much data is in flight based on observed conditions such as loss
+and delay.
+
+These mechanisms can make a write block or make progress slowly. A successful
+write means bytes were accepted by the local socket machinery, not that a remote
+application has already processed them. Likewise, a successful TCP handshake
+does not mean an HTTP request will be accepted.
+
+\section{Closing is a protocol too}
+
+Each direction of a TCP connection closes independently with FIN and
+acknowledgment exchange. A peer can finish sending while still receiving. An
+abrupt failure can produce a reset (RST), which discards the graceful-close
+story. Servers must expect clients to disappear between any two operations.
+
+The endpoint that actively closes can remain in a \code{TIME\_WAIT} state. This
+helps prevent delayed segments from an old connection being mistaken for a new
+one with the same endpoint tuple. It is normal protocol housekeeping, not
+automatically evidence of a leak.
+
+\section{Sockets: the application boundary}
+
+A socket is an operating-system object representing a communication endpoint.
+The typical server lifecycle is:
+
+\begin{enumerate}
+  \item \term{create} a TCP socket;
+  \item \term{bind} it to a local address and port;
+  \item mark it as \term{listening} with a backlog;
+  \item \term{accept} a connection, producing a new connected socket;
+  \item receive and send bytes on the connected socket;
+  \item close the connected socket and eventually the listener.
+\end{enumerate}
+
+The listener does not carry HTTP request bytes for an accepted client. The
+connected socket does. This separation lets one accept loop hand connections to
+workers while continuing to receive new arrivals.
+
+\subsection{Blocking and timeouts}
+
+A blocking call waits until it can make progress or report an event. Accept can
+wait for a client. Receive can wait for bytes. Send can wait for buffer capacity.
+Simple blocking code is ideal for learning because control flow is visible, but
+unbounded waiting gives a slow or silent peer control over a worker.
+
+A timeout changes an infinite wait into an explicit failure path. The server we
+build will set a read/idle timeout, limit header and body sizes, bound the number
+of workers and queued connections, and limit requests per persistent connection.
+These constraints are part of correctness, not optional tuning.
+
+\begin{securityboundary}
+An attacker does not need high bandwidth to exhaust a naive server. Many
+connections that send headers one byte at a time can occupy all blocking workers.
+Deadlines, byte limits, bounded queues, and graceful rejection reduce this risk.
+\end{securityboundary}
+
+\section{Partial operations are ordinary}
+
+A receive call returns up to the requested number of bytes. It may return fewer
+because that is what is currently available. An empty byte string indicates
+orderly end-of-stream. A low-level send can accept fewer bytes than supplied;
+Python's \code{sendall} repeatedly sends until all bytes are accepted or an error
+occurs.
+
+The correct question is never ``Did one read return my request?'' It is ``Does
+my accumulated buffer contain enough bytes, according to HTTP framing, to parse
+one complete request?''
+
+\section{Why not UDP?}
+
+UDP sends independent datagrams and does not provide TCP's ordered reliable
+stream. Applications that choose it must accept loss/reordering or implement
+the needed behavior. HTTP/3 uses QUIC over UDP, but QUIC itself supplies secure,
+reliable streams and congestion control. ``Uses UDP'' does not mean ``ignores
+reliability.'' We implement HTTP/1.1 over TCP because its text framing exposes
+the fundamentals clearly.
+
+\summarytitle
+
+TCP establishes state, presents ordered bytes, recovers from common packet loss,
+and controls sender behavior, but applications still need framing, timeouts,
+limits, and failure handling. A listening socket accepts connected sockets; each
+connected socket carries an unstructured byte stream from HTTP's perspective.
+
+\reviewtitle
+\begin{enumerate}
+  \item Why can one application write become several TCP segments?
+  \item What is the difference between flow control and congestion control?
+  \item What does an empty result from a receive operation mean?
+  \item Why does the server need both a listener and connected sockets?
+\end{enumerate}
+
+\begin{exercise}[Stream outcomes]
+A client writes a 600-byte header and a 200-byte body. List at least four legal
+ways a server's sequence of receive calls could divide those 800 bytes. State
+which HTTP rule tells the server when the body is complete.
+\end{exercise}
+
+\begin{exercise}[Slow client budget]
+Suppose a server has 16 blocking workers and no read timeout. Explain how 16
+clients can prevent a seventeenth valid client from being handled. Propose a
+timeout, queue, and rejection policy and describe the trade-off of each.
+\end{exercise}
+

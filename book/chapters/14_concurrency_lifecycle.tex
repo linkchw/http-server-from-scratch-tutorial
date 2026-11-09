@@ -1,0 +1,153 @@
+\chapter{Bounded concurrency and connection lifecycle}
+\chapterintro{Correct parsing is not enough if one silent client can consume every worker. The final server makes capacity, waiting, persistence, overload, and shutdown explicit.}
+
+\begin{objectives}
+\begin{itemize}
+  \item Explain the accept loop, finite connection queue, and fixed workers.
+  \item Handle per-connection parsing, timeouts, keep-alive, and maximum requests.
+  \item Define overload behavior instead of permitting unbounded memory growth.
+  \item Stop accepting and release resources during graceful shutdown.
+\end{itemize}
+\end{objectives}
+
+\section{From serial to concurrent}
+
+The early snapshots handle one accepted connection at a time. If a client pauses,
+new clients wait even when CPU and database capacity are available. Stage 7 adds
+a fixed set of worker threads and a finite queue:
+
+\codefile{../code/stages/07_bounded_concurrency/server.py}
+
+The accept loop does little work: accept, enqueue, or reject. Each worker takes a
+connection, applies a timeout, processes it, closes it, and marks the queue item
+complete. Four workers permit four blocking conversations; a queue of sixteen
+allows a short burst without allocating unlimited threads.
+
+\section{Bounded is a correctness property}
+
+An unbounded queue converts overload into growing memory use and increasing
+latency. An unbounded thread-per-connection design can exhaust memory, scheduler
+capacity, descriptors, and database connections. A bounded service reaches a
+known saturation point and rejects excess work predictably.
+
+The final defaults are sixteen workers and a 64-connection application queue.
+When the queue is full, the accept loop sends a small 503 problem and closes the
+connection. The response is best effort: a peer may disappear before reading it.
+
+Capacity values are not universal recommendations. Production sizing requires
+measurement of workload, latency, memory, downstream capacity, and failure
+behavior. Here they are visible teaching defaults.
+
+\section{One parser per connection}
+
+Each worker constructs a \code{RequestParser} when it begins a connection. The
+parser buffer survives across receive calls and, for keep-alive, across requests.
+It is never shared between connections. This avoids locks inside the parser and
+prevents bytes from different clients mixing.
+
+The worker loop asks the parser for a request before receiving more data. This
+detail matters when the previous receive already contained two requests. It
+processes buffered work without waiting for network input that may never come.
+
+\section{Persistent but finite}
+
+HTTP/1.1 persistence is enabled by default. The server closes when:
+
+\begin{itemize}
+  \item the client sends \code{Connection: close};
+  \item keep-alive is disabled in configuration;
+  \item 100 requests have used the connection;
+  \item parsing fails, input times out, the peer closes, or socket I/O fails;
+  \item server shutdown begins.
+\end{itemize}
+
+Each response states \code{Connection: keep-alive} or \code{close}. The five-
+second socket timeout bounds both a partial request and idle time before the next
+request. A production server would often use separate header, body, idle, write,
+and total deadlines.
+
+\section{Read the final server}
+
+\codefile{../code/final/tinyhttp/server.py}
+
+\subsection{Readiness and ephemeral ports}
+
+When configured with port zero, the operating system selects a free port. The
+server records its bound address and sets a readiness event after listening and
+starting workers. Integration tests can start a server thread, wait deterministically,
+and connect to the chosen port without guessing.
+
+\subsection{Timeout and protocol errors}
+
+An \code{HTTPError} becomes a problem response and closes the connection so no
+ambiguous bytes survive. A timeout with buffered data can receive 408; an idle
+connection simply closes. Socket errors are normal peer-failure outcomes and do
+not crash the accept loop.
+
+\subsection{Shutdown}
+
+\code{shutdown} sets a stop event, closes the listener to wake accept, places
+sentinels for workers, and joins them within a bound. Workers also observe the
+event in their loops. This is modest graceful behavior: it stops new acceptance
+and lets current operations finish or time out. It does not provide a configurable
+long drain period or connection migration.
+
+\section{Threads and SQLite}
+
+Python threads are appropriate for this teaching server because socket and
+SQLite waits release execution opportunities and blocking control flow remains
+readable. They do not make CPU-bound Python code scale linearly across cores.
+
+The Task repository opens a short-lived SQLite connection for each operation.
+Connections are not shared across workers. SQLite serializes writes as needed,
+and a busy timeout gives brief contention time to resolve. WAL mode improves
+reader/writer coexistence, but SQLite remains one embedded database with finite
+write capacity.
+
+\section{Alternatives}
+
+An event loop can manage many sockets with fewer threads by running non-blocking
+operations and resuming tasks when ready. ASGI frameworks use asynchronous
+interfaces for such workloads. Process pools or multiple server processes can
+use more CPU cores and isolate failures. Mature servers combine strategies.
+
+The important lesson is not ``threads are best.'' It is that every concurrency
+model has ownership, scheduling, cancellation, backpressure, and shutdown rules.
+Our bounded thread model makes those rules small enough to inspect.
+
+\begin{securityboundary}
+Timeouts and queues reduce resource exhaustion but do not make this server safe
+for hostile Internet traffic. Production parsers, TLS stacks, operating-system
+tuning, rate limiting, monitoring, patch processes, and defense in depth remain
+necessary.
+\end{securityboundary}
+
+\summarytitle
+
+The server accepts into a finite queue and uses a fixed worker set. Each
+connection owns its parser and is constrained by timeout and request count.
+Overload receives 503, protocol errors close ambiguous streams, and shutdown
+releases listener and workers. Bounds turn failure from accidental exhaustion
+into explicit behavior.
+
+\reviewtitle
+\begin{enumerate}
+  \item Why is a fixed worker count insufficient without a bounded queue?
+  \item Why must a parser buffer be connection-local?
+  \item Which conditions end keep-alive in this implementation?
+  \item What work remains for a production-grade graceful shutdown?
+\end{enumerate}
+
+\begin{exercise}[Capacity timeline]
+With two workers and a queue of three, draw the state after six clients connect
+and each worker blocks on a partial header. Identify which clients are active,
+queued, or rejected. Repeat after one worker times out.
+\end{exercise}
+
+\begin{exercise}[Concurrency test]
+Write an integration test that starts the server on port zero and sends 50
+concurrent GET requests. Collect every status with a deadline. The assertion
+should allow success and intentional overload, but no hangs or malformed
+responses.
+\end{exercise}
+

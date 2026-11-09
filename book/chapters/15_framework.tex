@@ -1,0 +1,185 @@
+\chapter{The complete tinyhttp framework}
+\chapterintro{The pieces now form a small framework: parser, public message types, router, middleware application, and bounded server. This chapter follows one request across every interface.}
+
+\begin{objectives}
+\begin{itemize}
+  \item Use the public framework API without depending on implementation internals.
+  \item Trace data from socket bytes to handler and back to response bytes.
+  \item Recognize invariants guaranteed at each boundary.
+  \item Run the package tests and extend it without widening its protocol claims silently.
+\end{itemize}
+\end{objectives}
+
+\section{Package boundaries}
+
+The final \code{tinyhttp} package contains five focused modules:
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}>{\bfseries}p{28mm} X X@{}}
+\toprule
+Module & Owns & Does not own \\
+\midrule
+models & Headers, Request, Response, HTTPError & socket I/O or routing \\
+parser & HTTP/1.1 request syntax, framing, target parsing & JSON domain rules \\
+router & method/path patterns and parameters & authorization or database lookup \\
+application & middleware, dispatch, safe error boundary & TCP lifecycle \\
+server & listener, workers, timeouts, keep-alive, serialization & task semantics \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\code{tinyhttp.\_\_init\_\_} exports only the teaching API. Application code
+imports \code{Application}, \code{Request}, \code{Response}, \code{HTTPError},
+\code{Server}, and \code{ServerConfig}; it need not import parser details.
+
+\section{A minimal application}
+
+The public shape is intentionally familiar but transparent:
+
+\begin{lstlisting}[style=pythonbook]
+from tinyhttp import Application, Request, Response, Server
+
+app = Application()
+
+@app.route("GET", "/hello/{name}")
+def hello(request: Request) -> Response:
+    return Response.json(
+        {"message": f"Hello, {request.path_params['name']}!"}
+    )
+
+Server(app).serve_forever()
+\end{lstlisting}
+
+The decorator registers a handler. The handler accepts one Request and returns
+one Response. The server depends on the application's \code{handle} method.
+There is no global hidden request object and no automatic database injection.
+
+\section{Trace one request}
+
+For \method{GET} \code{/hello/Ada?formal=yes}:
+
+\begin{enumerate}
+  \item The listener accepts a connected socket and a worker takes it from the queue.
+  \item A connection-local parser receives bytes until one complete message exists.
+  \item The parser validates HTTP/1.1, Host, fields, and framing; it decodes the
+        path and creates query lists.
+  \item \code{Application.handle} composes middleware and calls its dispatcher.
+  \item The router matches \code{/hello/\{name\}} and sets
+        \code{path\_params["name"]} to \code{"Ada"}.
+  \item The handler creates a UTF-8 JSON Response.
+  \item Middleware unwinds and can inspect the response.
+  \item The server adds wire fields, computes length, serializes, and calls
+        \code{sendall}.
+  \item If policy permits, the parser and socket remain for the next request.
+\end{enumerate}
+
+Each transition narrows the type of uncertainty. Socket code sees bytes; parser
+code produces an HTTP request; router code produces parameters; the handler
+produces a response value; the server produces bytes again.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  node distance=4mm,
+  box/.style={draw=Rule,fill=PaperTint,minimum height=8mm,
+              text width=26mm,align=center,font=\small\sffamily},
+  arrow/.style={-{Latex[length=2mm]},Accent}
+]
+\node[box] (socket) {socket bytes};
+\node[box,right=of socket] (parser) {RequestParser};
+\node[box,right=of parser] (app) {middleware};
+\node[box,right=of app] (router) {router};
+\node[box,below=8mm of router] (handler) {handler};
+\node[box,left=of handler] (response) {Response};
+\node[box,left=of response] (serializer) {serializer};
+\node[box,left=of serializer] (wire) {socket bytes};
+\draw[arrow] (socket) -- (parser);
+\draw[arrow] (parser) -- (app);
+\draw[arrow] (app) -- (router);
+\draw[arrow] (router) -- (handler);
+\draw[arrow] (handler) -- (response);
+\draw[arrow] (response) -- (serializer);
+\draw[arrow] (serializer) -- (wire);
+\end{tikzpicture}
+\caption{The framework data flow. The return path is represented on the lower row.}
+\label{fig:framework-flow}
+\end{figure}
+
+\section{Configuration is policy}
+
+\code{ServerConfig} centralizes address, port, workers, queue size, listen backlog,
+read timeout, keep-alive, request count, and parser limits. Tests replace the
+port with zero and use fewer workers. An application can disable keep-alive
+without rewriting server logic.
+
+Configuration values should not be changed independently without thought. A
+larger body limit increases memory pressure. More workers increase simultaneous
+database contention. A longer timeout multiplies the duration for which slow
+clients hold capacity.
+
+\section{Run the verification suite}
+
+From \filepath{code/final}:
+
+\begin{wiremessage}
+python -m unittest discover -s tests -v
+\end{wiremessage}
+
+The suite tests models and parser, application/router/middleware, real loopback
+socket exchange, and the Task API. Integration tests bind an ephemeral port and
+stop the server in teardown. A sandbox that forbids local sockets must grant that
+specific capability; skipping every network test would leave the central
+artifact unverified.
+
+\section{How to extend honestly}
+
+Before adding a feature, update the contract:
+
+\begin{enumerate}
+  \item name the semantics and relevant standard rules;
+  \item define accepted and rejected inputs;
+  \item identify which module owns the feature;
+  \item add adversarial tests before widening acceptance;
+  \item update documentation and limits;
+  \item preserve behavior for existing clients or version the interface.
+\end{enumerate}
+
+Adding chunked bodies, for example, is not just decoding hexadecimal sizes. It
+affects framing precedence, decoded limits, trailers, connection buffering,
+tests, and intermediary compatibility. Honest software names the whole change.
+
+\begin{checkpoint}
+You now have a reusable educational framework. Before beginning the backend,
+you should be able to open any module and state its inputs, outputs, invariants,
+resource ownership, and failure modes. The next part uses the framework rather
+than changing HTTP rules casually.
+\end{checkpoint}
+
+\summarytitle
+
+\code{tinyhttp} is small because its boundaries are narrow, not because it hides
+work. Five modules transform connection bytes into requests, route through
+middleware and handlers, and serialize responses under explicit limits. The
+public API is enough to build the Task backend while implementation invariants
+remain inspectable.
+
+\reviewtitle
+\begin{enumerate}
+  \item Which module owns each request-to-response transition?
+  \item What invariants may a handler assume about its Request?
+  \item Why is ServerConfig more than cosmetic settings?
+  \item What must change before claiming support for chunked requests?
+\end{enumerate}
+
+\begin{exercise}[Add a route safely]
+Add \code{GET /echo/\{value\}} to a small application, returning JSON with the
+path value and repeated \code{tag} query values. Test Unicode percent encoding,
+blank query values, HEAD fallback, OPTIONS, and a wrong method.
+\end{exercise}
+
+\begin{exercise}[Boundary review]
+Choose one class from each module and write its contract as preconditions,
+postconditions, invariants, and possible errors. Compare those contracts with
+the actual tests and add one missing case.
+\end{exercise}
+

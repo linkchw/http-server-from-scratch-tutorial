@@ -1,0 +1,119 @@
+\thispagestyle{empty}
+\begin{tikzpicture}[remember picture,overlay]
+  \fill[Ink] (current page.south west) rectangle (current page.north east);
+  \draw[Accent,line width=1.2pt]
+    ([xshift=18mm,yshift=-22mm]current page.north west)
+    rectangle
+    ([xshift=-18mm,yshift=22mm]current page.south east);
+  \foreach \x/\y in {35/62,58/76,78/55,112/72,142/54,165/76}{
+    \fill[Accent] ([xshift=\x mm,yshift=\y mm]current page.south west) circle (2.2pt);
+  }
+  \draw[Rule,opacity=.6,line width=.6pt]
+    ([xshift=35mm,yshift=62mm]current page.south west) --
+    ([xshift=58mm,yshift=76mm]current page.south west) --
+    ([xshift=78mm,yshift=55mm]current page.south west) --
+    ([xshift=112mm,yshift=72mm]current page.south west) --
+    ([xshift=142mm,yshift=54mm]current page.south west) --
+    ([xshift=165mm,yshift=76mm]current page.south west);
+  \node[anchor=north west,text width=165mm]
+    at ([xshift=24mm,yshift=-55mm]current page.north west) {
+      \sffamily\color{white}\fontsize{35}{42}\selectfont\bfseries
+      \BookTitle\\[8mm]
+      \fontsize{16}{22}\selectfont\mdseries\color{Rule}
+      \BookSubtitle
+    };
+  \node[anchor=south west]
+    at ([xshift=24mm,yshift=34mm]current page.south west) {
+      \sffamily\color{white}\large \BookEdition\quad\textcolor{Accent}{|}\quad\BookVersion
+    };
+\end{tikzpicture}
+\null\clearpage
+
+\thispagestyle{empty}
+\vspace*{0.24\textheight}
+{\sffamily\Huge\bfseries\color{Ink}\BookTitle\par}
+\vspace{1em}
+{\sffamily\Large\color{Muted}\BookSubtitle\par}
+\vfill
+{\sffamily\BookEdition\\\BookDate\par}
+\clearpage
+
+\thispagestyle{empty}
+\vspace*{0.12\textheight}
+{\sffamily\Large\bfseries About this edition\par}
+\vspace{1em}
+This mentoring edition is a guided textbook and laboratory manual. It teaches
+the ideas beneath HTTP before asking the reader to build a server. The software
+is intentionally small enough to inspect completely. It is not offered as a
+production web server.
+
+\vfill
+\noindent \BookTitle\\
+\BookSubtitle\\
+\BookEdition, \BookVersion\\
+\BookDate
+
+\vspace{2em}
+\noindent The examples use Python's standard library. Protocol descriptions
+are based on the standards listed in the bibliography. Code may be used and
+modified for educational purposes.
+\clearpage
+
+\chapter{How to use this book}
+
+This book is both a roadmap and a construction manual. The first seven
+chapters form a theory gate: do not rush through them simply because they do
+not yet create a server. A parser is much easier to design when you can explain
+what a byte stream is, where message boundaries come from, and which HTTP rules
+exist to prevent two recipients from disagreeing about a request.
+
+Beginning with Part II, every major step has a frozen source snapshot under
+\filepath{code/stages}. Read a chapter, predict the behavior, run the snapshot,
+make a small change, and then compare your result with the next stage. Part III
+turns the reusable framework into a complete SQLite-backed Task API.
+
+\begin{objectives}
+By the end, you should be able to:
+\begin{itemize}
+  \item narrate a request from a URL through DNS, TCP, HTTP, routing, and storage;
+  \item explain why TCP reads do not correspond to HTTP messages;
+  \item parse a strict, length-framed HTTP/1.1 subset safely;
+  \item design request, response, routing, middleware, and server abstractions;
+  \item implement and test a resource-oriented JSON API;
+  \item state exactly why the finished server is educational rather than production-ready.
+\end{itemize}
+\end{objectives}
+
+\section{The weekly rhythm}
+
+Plan for six to eight focused hours each week: two or three hours of reading,
+two or three hours of code-along work, and one or two hours for exercises and
+reflection. Keep a lab notebook. For every surprising result, write the bytes
+you expected, the bytes you observed, and the rule that explains the difference.
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}>{\bfseries}l X X@{}}
+\toprule
+Weeks & Focus & Deliverable \\
+\midrule
+1--4 & Network and HTTP theory & Annotated request journey and theory checkpoint \\
+5--9 & Socket server and framework & Tested \code{tinyhttp} package \\
+10--12 & SQLite REST API and hardening & Complete Task API and final assessment \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\section{Conventions}
+
+Wire messages use a monospaced block. The symbol \code{CRLF} means the two
+bytes carriage return (13) and line feed (10), written in Python as
+\code{b"\\r\\n"}. Commands use \code{python}; on Windows, \code{py} may be
+the correct launcher. Paths use forward slashes, even though Windows also
+accepts backslashes in many shell contexts.
+
+\begin{securityboundary}
+Run the examples on \code{127.0.0.1}. Binding to \code{0.0.0.0} exposes the
+learning server to other machines that can reach your computer. Do not expose
+it to the public Internet.
+\end{securityboundary}
+

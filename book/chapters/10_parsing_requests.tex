@@ -1,0 +1,149 @@
+\chapter{Building an incremental request parser}
+\chapterintro{Parsing turns hostile bytes into a trusted internal structure. The parser's most important output is not convenience; it is one unambiguous interpretation of exactly one message.}
+
+\begin{objectives}
+\begin{itemize}
+  \item Separate incremental buffering, syntactic parsing, framing, and semantic validation.
+  \item Build structured requests without losing repeated fields or trailing bytes.
+  \item Reject malformed lines, unsupported versions, conflicting framing, and invalid targets.
+  \item Test the parser independently of sockets with fragmented inputs.
+\end{itemize}
+\end{objectives}
+
+\section{From a teaching parser to a strict parser}
+
+Stage 3 introduces a readable request dataclass and a direct parsing function.
+It is intentionally smaller than the final implementation.
+
+\codefile{../code/stages/03_request_parser/server.py}
+
+The stage establishes the right order: find the header boundary, parse the start
+line and fields, determine content length, receive the declared body, then create
+a request. It still uses a one-value dictionary for fields, does not preserve
+leftover bytes, and handles errors with broad 400 responses. Those limitations
+motivate the final types rather than remaining hidden.
+
+\section{The final parsing contract}
+
+\code{RequestParser} owns one byte buffer for one TCP connection. Calling
+\code{feed} never promises a complete request. Calling \code{pop\_request}
+returns either one structured request or \code{None}. A protocol violation raises
+\code{HTTPError} with a safe status and detail.
+
+The algorithm is:
+
+\begin{enumerate}
+  \item find the first CRLF--CRLF header boundary;
+  \item if absent, apply early line/header limits and request more bytes;
+  \item validate strict line endings;
+  \item parse the request line and require HTTP/1.1;
+  \item parse each field into a multi-value collection and require one Host;
+  \item determine body length or reject unsupported/ambiguous framing;
+  \item if the declared body is incomplete, return \code{None};
+  \item copy exactly the body, delete exactly the consumed prefix, parse the
+        target, and construct \code{Request}.
+\end{enumerate}
+
+This order avoids interpreting a partial body and preserves a following request.
+
+\section{Read the complete final parser}
+
+\codefile{../code/final/tinyhttp/parser.py}
+
+\subsection{Tokens and line syntax}
+
+The method and field name use a token allow-list. The request line must contain
+exactly three non-empty space-separated components. This intentionally rejects
+tabs and extra spaces instead of trying to guess intent. Version mismatches
+receive 505 rather than falling through into a parser designed for different
+syntax.
+
+Header values are decoded with ISO-8859-1 as a byte-preserving mapping for the
+HTTP/1.x field octets accepted by this implementation. Individual application
+fields still need their own semantics. Control characters and obsolete folding
+are rejected.
+
+\subsection{Framing before content}
+
+The parser inspects every occurrence of \code{Transfer-Encoding} and
+\code{Content-Length}. It never accepts both. It rejects repeated lengths and
+does not wait for a body whose declared size already exceeds the limit. Only a
+single valid decimal length is used to slice the stream.
+
+This decision belongs in the HTTP parser, not in a JSON handler. A handler should
+receive only a body whose byte boundary is already established.
+
+\subsection{Targets and decoding}
+
+The parser accepts a path beginning with slash or the asterisk target. It rejects
+an absolute URI because this server is an origin, not a forward proxy. It rejects
+fragments, which are client-side URI components and should not be sent as HTTP
+request targets.
+
+Percent escapes are validated before decoding. Path segments are decoded
+separately so an encoded slash inside a segment does not secretly create a new
+routing segment. Query parsing preserves repeated values in lists. Invalid UTF-8
+becomes a 400 problem instead of leaking a Unicode exception.
+
+\section{Internal trust is earned in layers}
+
+After parser success, code may trust that the request has one message boundary,
+a legal supported version, valid field syntax, and a parsed target. It may not
+yet trust that JSON is well formed, a task status is allowed, a referenced task
+exists, or a user is authorized. Each layer narrows uncertainty according to
+its expertise.
+
+\begin{mentalmodel}
+Validation is not one function at the edge. Transport validates stream progress;
+HTTP validates message syntax and framing; content code validates media syntax;
+the application validates domain rules; storage enforces durable constraints.
+\end{mentalmodel}
+
+\section{Parser tests as executable grammar examples}
+
+The test suite feeds requests one byte at a time, puts two requests in one feed,
+tests repeated fields, rejects missing Host, rejects transfer coding, and applies
+limits before waiting for an oversized body. These cases are more valuable than
+testing only a browser's ordinary GET.
+
+For every accepted example, add fragmentation variants. For every rejected
+example, assert both status and reason category. A parser test should not depend
+on timing or the operating system's packet choices.
+
+\begin{tryit}
+From \filepath{code/final}, run:
+\begin{wiremessage}
+python -m unittest tests.test_models_parser -v
+\end{wiremessage}
+Then add a test for a malformed percent escape such as \code{/tasks/\%ZZ}. Make
+the expectation explicit before running it.
+\end{tryit}
+
+\summarytitle
+
+The incremental parser owns a connection buffer and consumes exactly one framed
+message. It validates strict start/field syntax, preserves repeated fields,
+rejects ambiguous framing, enforces limits early, and produces decoded path and
+query structures. Later layers receive a safer request, not magically trusted
+application data.
+
+\reviewtitle
+\begin{enumerate}
+  \item Why can \code{pop\_request} return \code{None} without indicating an error?
+  \item Which bytes remain after one request is removed from the buffer?
+  \item Why are percent escapes checked before decoding?
+  \item What validation still remains after HTTP parsing succeeds?
+\end{enumerate}
+
+\begin{exercise}[Adversarial table]
+Create a table of at least twelve requests: four valid, four incomplete, and four
+invalid. Include duplicate lengths, invalid Host, a large declared body, an
+encoded path, and two buffered requests. Record expected parser outcome and
+status where applicable.
+\end{exercise}
+
+\begin{exercise}[Invariant proof]
+State an invariant for the parser buffer before and after \code{pop\_request}.
+Explain why deleting exactly \code{header\_end + content\_length} bytes preserves
+that invariant for persistent connections.
+\end{exercise}

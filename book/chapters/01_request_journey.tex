@@ -1,0 +1,180 @@
+\chapter{One request, end to end}
+\chapterintro{Before building a server, build a precise story of what a server participates in. A URL typed into a browser crosses many boundaries; HTTP is only one layer of that journey.}
+
+\begin{objectives}
+\begin{itemize}
+  \item Identify the client, origin server, resolver, routers, and intermediaries in a web request.
+  \item Separate name resolution, connection establishment, security, HTTP exchange, and application work.
+  \item Distinguish a protocol from an implementation and a resource from its representation.
+  \item Locate failures by phase instead of calling every problem ``the network.''
+\end{itemize}
+\end{objectives}
+
+\section{Begin with a URL}
+
+Imagine entering \url{https://api.example.test/tasks/17?view=compact} into a
+client. The string is an instruction, not a connection. It identifies a scheme
+(\code{https}), an authority (\code{api.example.test}), a path
+(\code{/tasks/17}), and a query (\code{view=compact}). The client must turn that
+description into communication with some process.
+
+The scheme determines important defaults and rules. HTTPS normally implies a
+secure connection and a default port of 443. The hostname is meaningful to
+humans and to the Domain Name System, but the Internet Protocol forwards
+packets using numeric addresses. The path and query are carried inside the HTTP
+request; routers in the network do not use them to choose a physical route.
+
+\begin{mentalmodel}
+A URL answers \emph{what origin and resource do I want?}; DNS helps answer
+\emph{which address can reach that origin?}; TCP creates an ordered byte
+stream to a port; TLS protects that stream; HTTP gives the bytes message
+semantics; application code decides what the resource means.
+\end{mentalmodel}
+
+\section{The phases}
+
+A typical first request proceeds through the following phases. Real clients
+reuse cached DNS answers, existing connections, and cached responses, so some
+phases can disappear on later requests.
+
+\begin{enumerate}
+  \item The client parses and validates the URL.
+  \item It consults local configuration and caches, then asks a DNS resolver for
+        one or more IP addresses.
+  \item The operating system selects a route and a source address.
+  \item The client asks the operating system to open a TCP connection to the
+        selected address and port.
+  \item For HTTPS, client and server perform a TLS handshake. The client checks
+        that the certificate is valid for the requested hostname.
+  \item The client serializes an HTTP request into bytes and writes them to the
+        connection.
+  \item The server operating system accepts the connection and makes received
+        bytes available to a process through a socket.
+  \item Server code reads, frames, parses, validates, routes, and handles the
+        request. It might query a database or another service.
+  \item The server serializes an HTTP response and writes it to the connection.
+  \item The client parses the response, interprets its status and fields, and
+        uses the representation. A browser might then request more resources.
+\end{enumerate}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  node distance=8mm and 8mm,
+  box/.style={draw=Rule,fill=PaperTint,rounded corners=1mm,minimum height=9mm,
+              text width=25mm,align=center,font=\small\sffamily},
+  arrow/.style={-{Latex[length=2mm]},draw=Accent}
+]
+\node[box] (url) {URL and client};
+\node[box,right=of url] (dns) {DNS resolver};
+\node[box,right=of dns] (tcp) {TCP connection};
+\node[box,right=of tcp] (tls) {TLS channel};
+\node[box,below=of tls] (http) {HTTP parser};
+\node[box,left=of http] (router) {Application router};
+\node[box,left=of router] (db) {Resource and storage};
+\draw[arrow] (url) -- node[above,font=\scriptsize]{name} (dns);
+\draw[arrow] (dns) -- node[above,font=\scriptsize]{address} (tcp);
+\draw[arrow] (tcp) -- node[above,font=\scriptsize]{bytes} (tls);
+\draw[arrow] (tls) -- (http);
+\draw[arrow] (http) -- node[above,font=\scriptsize]{request} (router);
+\draw[arrow] (router) -- node[above,font=\scriptsize]{operation} (db);
+\draw[arrow,dashed] (db.south) |- node[below,font=\scriptsize]{response travels back} (url.south);
+\end{tikzpicture}
+\caption{The conceptual phases of a first HTTPS request. Each arrow hides a
+separate interface and possible failure.}
+\label{fig:request-journey}
+\end{figure}
+
+\section{Client, server, and resource}
+
+\term{Client} and \term{server} describe roles in one interaction. A process
+can be a server while receiving an API request and then become a client when it
+calls a database proxy or another service. The machine itself is not inherently
+the server; the listening process is performing the server role.
+
+An HTTP \term{resource} is an abstraction identified by a URI. A task is not
+the JSON text sent across the wire. JSON is one \term{representation} of that
+task at a particular time. The same resource might have an HTML representation,
+a compact JSON representation, or no transferable representation after a
+successful deletion. This distinction later explains media types, content
+negotiation, validators, and status codes.
+
+\section{Where the server begins and ends}
+
+Our Python code will not implement Ethernet, IP, or TCP. The operating system
+does that work and exposes a socket interface. ``From scratch'' therefore
+means from the lowest portable application interface: raw TCP sockets. We will
+manually define the HTTP boundary, parse requests, serialize responses, route
+resources, compose middleware, control concurrency, and connect the application
+to SQLite.
+
+This boundary is important. Calling \code{recv} does not retrieve ``one HTTP
+request.'' It retrieves some bytes currently available from a TCP stream. The
+HTTP implementation must decide whether those bytes contain a complete header,
+how long the body is, and whether bytes after that body belong to a later
+request.
+
+\section{Failure belongs to a phase}
+
+Precise phase language makes debugging faster.
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}>{\bfseries}p{28mm} X X@{}}
+\toprule
+Phase & Typical symptom & First question \\
+\midrule
+DNS & Name cannot be resolved & Did the resolver return an address? \\
+Routing & Destination appears unreachable & Is there a route to that address? \\
+TCP & Connection refused or times out & Is a process listening on the chosen address and port? \\
+TLS & Certificate or handshake failure & Does identity verification match the hostname? \\
+HTTP framing & Client waits, closes, or reports a malformed response & Are lines, lengths, and boundaries correct? \\
+Application & A valid 4xx or 5xx response & Which resource rule or dependency failed? \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{pitfall}
+An HTTP \status{404 Not Found} proves that an HTTP response came back. DNS,
+routing, TCP, and enough HTTP parsing already worked. Treating it as a generic
+connectivity failure sends debugging in the wrong direction.
+\end{pitfall}
+
+\section{Latency is accumulated waiting}
+
+The total time observed by a user includes name resolution, connection and TLS
+round trips, queueing, application work, database time, response transfer, and
+client processing. A server handler that takes 20 milliseconds does not imply a
+20-millisecond user experience. Conversely, connection reuse can remove several
+round trips even when application code is unchanged.
+
+This is the first systems lesson of the book: behavior emerges from a chain of
+components. Measurements must state where they begin and end.
+
+\summarytitle
+
+A URL initiates several distinct protocols and interfaces. DNS supplies an
+address; IP forwards packets; TCP exposes an ordered byte stream; TLS can protect
+it; HTTP defines messages; application code gives resources meaning. Our server
+will begin at the socket boundary and implement the layers above it.
+
+\reviewtitle
+\begin{enumerate}
+  \item Why does a router not need the path \code{/tasks/17} to forward an IP packet?
+  \item Which phases have already succeeded when a client receives a valid 404 response?
+  \item Why is a JSON document a representation rather than the resource itself?
+  \item In what situation can one process be both an HTTP server and an HTTP client?
+\end{enumerate}
+
+\begin{exercise}[Draw the journey]
+Draw the request journey for a local URL such as
+\url{http://127.0.0.1:8080/health}. Cross out the phases that do not occur and
+explain why. Then redraw it for an HTTPS API reached through a reverse proxy.
+\end{exercise}
+
+\begin{exercise}[Classify failures]
+Classify each symptom by its earliest likely phase: ``name not known,''
+``connection refused,'' ``certificate hostname mismatch,'' ``400 Bad Request,''
+and ``database busy.'' For each, name one observation that would confirm the
+classification.
+\end{exercise}
+

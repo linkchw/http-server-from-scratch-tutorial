@@ -1,0 +1,330 @@
+\chapter{Exercise solutions and mentor notes}
+
+These are reference solutions, not the only valid wording. The important quality
+is an explicit boundary, justified protocol rule, and observable evidence. A
+mentor should ask the intern to explain differences before showing this appendix.
+
+\section{Foundations}
+
+\subsection*{Exercise 1.1 --- Draw the journey}
+
+For \url{http://127.0.0.1:8080/health}, no DNS lookup is required because the
+host is already an address. IP routing selects loopback; packets do not leave the
+machine. There is a TCP handshake, no TLS handshake, then HTTP request parsing,
+routing to health, response serialization, and TCP close or reuse. Through an
+HTTPS reverse proxy, add DNS, a route across one or more networks, TLS termination
+at the proxy, one HTTP connection from client to proxy, and usually another
+proxy-to-application connection. Mark the proxy as a trust boundary.
+
+\subsection*{Exercise 1.2 --- Classify failures}
+
+``Name not known'' belongs to DNS. ``Connection refused'' is TCP evidence that
+the destination actively rejected the selected endpoint, commonly because no
+listener exists. Certificate mismatch is TLS identity verification. A valid 400
+is HTTP/application parsing evidence. ``Database busy'' occurs after enough HTTP
+and routing succeeded to reach storage. Confirm with resolver output, the exact
+endpoint, TLS verification detail, raw response, and structured server logs.
+
+\subsection*{Exercise 2.1 --- Design a frame}
+
+One valid design is a four-byte unsigned big-endian length followed by that many
+UTF-8 bytes, repeated until the connection closes. Length zero represents an
+empty note; close between frames ends the sequence; close before the declared
+length is an incomplete-note error. Reject lengths above a configured maximum
+before allocating. A delimiter design is possible, but then delimiter escaping
+or prohibition must be specified.
+
+\subsection*{Exercise 2.2 --- Count the bytes}
+
+\code{hello} is five characters and five UTF-8 bytes. \code{café} is four
+characters and five UTF-8 bytes when the last character is the single code point
+U+00E9. A visually identical decomposed form can have five characters/code points
+and six bytes. Network length is the length of the final encoded bytes, not the
+visual character count.
+
+\subsection*{Exercise 3.1 --- Endpoint inventory}
+
+Example: listener \code{127.0.0.1:8080}; first client
+\code{127.0.0.1:53001}; TCP tuple client-to-server is
+\code{127.0.0.1:53001 -> 127.0.0.1:8080}. A second client might use port 53002.
+Protocol and server endpoint remain; the client source port changes, allowing the
+operating system to distinguish connections.
+
+\subsection*{Exercise 3.2 --- Resolution narrative}
+
+The stub asks a recursive resolver. On a miss, that resolver asks root for a
+delegation, a TLD server for the authoritative delegation, and the authoritative
+server for the record; it caches referrals and answer under TTLs. On a complete
+cache hit, the resolver answers immediately and all upstream DNS round trips
+disappear. The client may also have a local cache, removing even the resolver
+exchange.
+
+\subsection*{Exercise 4.1 --- Stream outcomes}
+
+Legal reads include 800 once; 600 then 200; 100 repeated eight times; or 50,
+300, 7, 443. TCP can split anywhere. The CRLF--CRLF delimiter ends fields, then
+Content-Length (200 in this example) determines body completion. The header's
+physical segment boundaries are irrelevant.
+
+\subsection*{Exercise 4.2 --- Slow client budget}
+
+Sixteen clients can each occupy one worker while never completing a header; the
+seventeenth remains queued or unaccepted. A reasonable learning policy is a
+five-second read timeout, 64-slot queue, and best-effort 503 on overflow. Shorter
+timeouts free capacity faster but reject slower legitimate clients; larger queues
+absorb bursts but consume descriptors and increase waiting latency.
+
+\subsection*{Exercise 5.1 --- Method audit}
+
+POST creates; GET reads; PUT replaces; PATCH partially modifies; DELETE removes.
+GET, PUT, and DELETE are idempotent by standard semantics and are candidates for
+retry after uncertain transport failure, though preconditions and concurrent
+changes matter. POST creation is not safely retried without an idempotency key.
+PATCH safety depends on the patch semantics: assignment of a fixed value is
+idempotent, while ``increment by one'' is not.
+
+\subsection*{Exercise 5.2 --- Choose the result}
+
+Creation: 201 with Location. Successful no-body deletion: 204. Malformed JSON:
+400. Unknown task: 404. Known path/wrong method: 405 plus Allow. Unsupported
+media: 415. Invalid fields: 422 with field errors. Unexpected database failure:
+500 with generic client detail and internal logging.
+
+\subsection*{Exercise 6.1 --- Frame two requests}
+
+A GET ends at the second CRLF of its empty line; the next method byte follows
+immediately. A POST boundary is \code{header\_end + Content-Length}. There is no
+extra blank line after the body. A parser must retain the next method bytes in
+its connection buffer.
+
+\subsection*{Exercise 6.2 --- Ambiguity review}
+
+If a proxy honors Transfer-Encoding while an origin honors Content-Length, the
+proxy can treat chunk syntax as the first body while the origin consumes four
+raw bytes. Their next-request positions differ. Attacker-controlled trailing
+bytes may become a second request for one recipient. The correct project policy
+is reject the combination and close.
+
+\subsection*{Exercise 7.1 --- Theory gate}
+
+A complete diagram includes URL parsing, DNS, routed IP, TCP, optional TLS at a
+proxy, HTTP bytes, parser limits/framing, request object, router parameters,
+JSON/domain validation, parameterized SQL transaction, response object, HTTP
+serialization, and the reverse byte path. Mark client/proxy and HTTP/application
+boundaries as untrusted; mark bytes-to-text conversions at request line/fields,
+percent-decoded target, JSON UTF-8, and response JSON.
+
+\subsection*{Exercise 7.2 --- Feature classification}
+
+Implemented: Content-Length, GET, ordinary repeated fields, JSON, and bounded
+keep-alive. Rejected: HTTP/2 at the HTTP/1 parser, chunked/any Transfer-Encoding,
+duplicate Content-Length, and unsupported methods/versions. Explanation-only:
+TLS and authentication. Rejection is a response/closed connection or a separate
+deployment boundary, never silent guessing.
+
+\section{Building the server}
+
+\subsection*{Exercise 8.1 --- Predict before running}
+
+The stage answers every received byte sequence with the same 200 because it does
+not parse. A changed path and POST therefore still succeed. Sending a line is
+enough to unblock recv. Connecting and sending nothing blocks forever. A second
+client may complete its handshake and wait in the listen backlog, but the process
+serves only the first and then exits.
+
+\subsection*{Exercise 8.2 --- Resource lifetime}
+
+The listener exists from socket creation through the outer \code{with}. The OS
+queues connection state after listen. Accept returns a new descriptor owned by
+the inner \code{with}; closing it sends/causes TCP teardown independently of the
+listener. Leaving either block closes its descriptor even during an exception.
+
+\subsection*{Exercise 9.1 --- Fragment table}
+
+For a request of length $n$, there are $n-1$ interior two-fragment divisions.
+Before the second fragment, the parser returns incomplete because no full final
+delimiter exists (unless the division is after the entire header). After both,
+the accumulated bytes are identical, so the parsed result must be identical.
+This property is ideal for a loop-driven unit test.
+
+\subsection*{Exercise 9.2 --- Limit placement}
+
+Request-line limit can be enforced when CRLF arrives or the buffer exceeds the
+limit before CRLF. Header-byte limit applies while searching for CRLF--CRLF.
+Field count applies after lines are available. Body limit applies immediately
+after a valid declared length, before body bytes arrive. These early checks avoid
+waiting or allocating for already-invalid messages.
+
+\subsection*{Exercise 10.1 --- Adversarial table}
+
+Valid examples should include GET, zero-length POST, repeated non-framing fields,
+and percent-encoded Unicode. Incomplete examples include partial request line,
+partial field delimiter, declared body short by one, and second request prefix.
+Invalid examples include missing Host, duplicate length, transfer coding, and
+invalid percent escape. Expected outcomes are Request, None, or HTTPError with
+400/413/431/501 as appropriate.
+
+\subsection*{Exercise 10.2 --- Invariant proof}
+
+Before pop, the buffer is an unconsumed prefix of one or more stream messages.
+After success, it contains exactly the unconsumed suffix after one complete
+message. Header end identifies the body start; validated Content-Length identifies
+the first byte after the body. Deleting their sum therefore removes neither too
+few nor too many bytes.
+
+\subsection*{Exercise 11.1 --- Serializer matrix}
+
+GET/200: Content-Length equals body and body is sent. HEAD/200: same length but
+zero transmitted content. GET/204 and GET/304: no content and this serializer
+removes Content-Length. GET/500: problem JSON length and body are sent. All have
+a status line and connection policy.
+
+\subsection*{Exercise 11.2 --- Injection attempt}
+
+\code{Headers({"X-Test": "ok\\r\\nInjected: yes"})} raises ValueError. Percent
+encoding is representation-specific and recipients do not generally decode it
+in field lines; applying it blindly changes legitimate values and still leaves
+other control-character contexts. Validate the grammar at the field boundary.
+
+\subsection*{Exercise 12.1 --- Route conflict table}
+
+Static \code{/tasks/statistics} must beat \code{/tasks/\{task\_id\}}. GET on both
+resolves; POST on the statistics path returns 405 if only GET exists; an unknown
+two-segment path can match the parameter route; an unknown three-segment path is
+404. For every matched path, allowed includes OPTIONS and includes HEAD when GET
+exists.
+
+\subsection*{Exercise 12.2 --- Nested resource}
+
+Use \path{/projects/{project_id}/tasks} and
+\path{/projects/{project_id}/tasks/{task_id}}. The router captures both
+strings. Application code converts IDs, checks positivity, confirms project and
+task existence, and ensures the task belongs to the project. Authorization also
+belongs after routing.
+
+\subsection*{Exercise 13.1 --- Error taxonomy}
+
+HTTP line/framing errors belong to parser and produce 400/4xx/501 with close.
+Malformed JSON belongs to Request JSON and is 400. Invalid fields belong to Task
+validation and are 422. Missing task is resource logic and 404. SQL constraint
+unexpectedly reached or programmer exception is 500 and logged. Only expected
+public errors carry detailed client-safe messages.
+
+\subsection*{Exercise 13.2 --- Request ID middleware}
+
+Accept an incoming ID only from a trusted policy, for example 1--64 ASCII letters,
+digits, hyphen, and underscore; otherwise generate a UUID. Put it in request
+context and an \code{X-Request-ID} response field. Use structured logging so it
+is a value, not format text. Do not accept CR/LF, unlimited length, or arbitrary
+Unicode control characters.
+
+\subsection*{Exercise 14.1 --- Capacity timeline}
+
+Clients 1--2 occupy workers; 3--5 fill the queue; 6 receives 503/close. When one
+worker times out, it closes its slow client and immediately takes client 3, leaving
+two queued slots used. Exact TCP accept backlog state can exist before the
+application queue and should be drawn separately.
+
+\subsection*{Exercise 14.2 --- Concurrency test}
+
+Start on port zero, wait for readiness, then use a 50-worker executor. Each client
+sets a finite timeout, sends GET with Connection close, consumes the response,
+and returns status. Collect with a global deadline. With the default 16/64
+capacity, all 50 should be 200 locally; a deliberately smaller queue may allow
+200 or 503, but never hangs or malformed responses.
+
+\subsection*{Exercise 15.1 --- Add a route safely}
+
+Register GET \code{/echo/\{value\}}. Read the captured value and
+\code{request.query.get("tag", [])}; return both through Response.json. Tests
+should include UTF-8 percent encoding, \code{?tag=} as an empty string, repeated
+tags preserving order, HEAD with no transmitted body in integration, OPTIONS
+with Allow, and POST returning 405.
+
+\subsection*{Exercise 15.2 --- Boundary review}
+
+Example parser contract: feed accepts bytes and may raise a limit error; pop
+returns one Request, None, or HTTPError; its invariant is an unconsumed stream
+prefix; it never discards following bytes. Compare with tests for fragmentation,
+combined requests, framing conflicts, and limits. A useful missing case is close
+during a declared body, tested at the server reader boundary.
+
+\section{Backend and production bridge}
+
+\subsection*{Exercise 16.1 --- Contract examples}
+
+Examples must include Host, JSON media type, byte-correct length, status, response
+media type, and body. Creation returns 201/Location; list returns the envelope;
+individual reads/updates return task JSON; delete returns 204. Error fixtures
+cover 400, 404, 405/Allow, 411, 413, 415, 422 field errors, and generic 500.
+
+\subsection*{Exercise 16.2 --- completed\_at design}
+
+Make it server-owned and nullable. Transition into done sets current UTC if null;
+transition out clears it; repeated done assignment preserves or deliberately
+refreshes it according to the written contract. Add a nullable schema column and
+state/status consistency check if expressible. Include it in representations,
+exclude client writes, migrate version, and preserve old clients that ignore it.
+
+\subsection*{Exercise 17.1 --- Constraint failure}
+
+Calling create with status \code{almost} raises an integrity error and the context
+manager rolls back, leaving row count unchanged. HTTP validation remains necessary
+because it produces a stable 422 with field detail; a raw database exception would
+otherwise cross the generic 500 boundary and waste database work.
+
+\subsection*{Exercise 17.2 --- Query plan}
+
+An equality predicate on indexed status can use \code{tasks\_status\_idx}. A
+pattern \code{\%word\%} cannot seek from an ordered B-tree prefix, so SQLite
+normally scans rows. Full-text search or a different index strategy is needed at
+scale; parameterization remains required either way.
+
+\subsection*{Exercise 18.1 --- End-to-end extension}
+
+Register GET \code{/tasks/summary} before or independently of parameter order;
+static precedence ensures it wins. Repository SQL groups by status and fills
+missing enum values with zero in application output. Test all-zero, mixed counts,
+HEAD, OPTIONS, and wrong method. The handler returns one JSON object and performs
+no identifier conversion.
+
+\subsection*{Exercise 18.2 --- Optimistic concurrency design}
+
+Generate a strong ETag from a version column or canonical representation. GET
+returns it. PUT/PATCH requires or optionally accepts If-Match; a mismatch returns
+412 Precondition Failed. The database update includes \code{WHERE id=? AND
+version=?}, increments version atomically, and distinguishes missing resource
+from stale version. Define policy for absent If-Match before implementation.
+
+\subsection*{Exercise 19.1 --- Boundary expansion}
+
+For a 1 MiB body limit, declare lengths $limit-1$, $limit$, and $limit+1$. The
+first two remain acceptable if fully received; the last is rejected as soon as
+fields are parsed, without receiving body bytes. Repeat at a small test limit to
+avoid allocating large fixtures.
+
+\subsection*{Exercise 19.2 --- Mini threat model}
+
+Assets include task data, host capacity, database integrity, and logs. Entry
+points are TCP bytes, HTTP fields/body/query/path, CLI/database path, and local
+file access. Controls include loopback, strict parser, limits, parameterized SQL,
+and safe 500. Major missing controls include identity/authorization, TLS, rate
+limits, process isolation, backup, and operational monitoring. Public exposure
+would make unauthorized data access and resource exhaustion top risks.
+
+\subsection*{Exercise 20.1 --- Production comparison}
+
+A sound comparison maps server protocol parsing to a production server; Request
+and Response to framework types; route decorator and middleware to their mature
+equivalents; worker/timeouts/shutdown to server settings; SQLite repository to
+the framework's database layer. Capabilities absent here commonly include HTTP/2,
+TLS, streaming, async, multipart forms, cookies, sessions, authentication,
+dependency injection, schema validation, and deployment tooling.
+
+\subsection*{Exercise 20.2 --- Capstone retrospective}
+
+A strong note names specific prior beliefs, cites reproducible experiments, and
+connects the most security-sensitive decision to framing agreement. It should
+defend at least the boundary between production protocol server and application:
+use maintained parsers/TLS/workers while keeping domain logic independently
+tested. Personal examples vary; unsupported confidence without evidence does not.

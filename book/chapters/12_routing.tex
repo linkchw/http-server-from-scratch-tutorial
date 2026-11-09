@@ -1,0 +1,112 @@
+\chapter{Routing methods and resource paths}
+\chapterintro{The HTTP parser identifies a target; the router maps method and path shape to application code. Correct routing distinguishes absence from a method mismatch and makes precedence deterministic.}
+
+\begin{objectives}
+\begin{itemize}
+  \item Register handlers by method and segment pattern.
+  \item Match static and parameter segments with deterministic precedence.
+  \item Distinguish 404, 405, automatic HEAD, and OPTIONS behavior.
+  \item Keep query filtering outside path-shape matching.
+\end{itemize}
+\end{objectives}
+
+\section{A small first router}
+
+Stage 5 introduces a decorator, a route table, and \code{\{task\_id\}} capture:
+
+\codefile{../code/stages/05_router/server.py}
+
+The decorator records configuration at import time and returns the original
+handler, so the function remains directly testable. Resolution splits paths into
+segments and matches each against either literal text or a parameter placeholder.
+
+The stage is intentionally naive: registration order can let a parameter route
+shadow a static route, it reports every miss as 404, and it knows nothing about
+HEAD or OPTIONS. The final router addresses each point.
+
+\section{Static routes are more specific}
+
+Consider \code{/users/me} and \code{/users/\{user\_id\}}. Both structurally match
+the path \code{/users/me}, but the literal route expresses a more specific
+resource. The final router sorts candidates by parameter count and then stable
+registration order. Static routes therefore win without making behavior depend
+on an accidental decorator order.
+
+Only whole segments can be parameters. Patterns such as
+\code{/files/\{name\}.json} are outside the small router's grammar. Parameter
+names must be valid, unique Python identifiers. These rules keep matching easy
+to teach and reason about.
+
+\codefile{../code/final/tinyhttp/router.py}
+
+\section{Path match and method match are separate facts}
+
+Resolution gathers methods allowed by every route whose path pattern matches.
+If no pattern matches, the result is 404. If a pattern matches but not for the
+request method, the result is 405 with an \code{Allow} field. This distinction
+helps clients discover and correct method use.
+
+When GET is available, HEAD is also allowed. A HEAD request falls back to the GET
+handler, after which the serializer suppresses content bytes. OPTIONS receives
+an automatically generated 204 response with allowed methods. The application
+does not require every resource handler to repeat protocol mechanics.
+
+\section{Path parameters are strings first}
+
+The router captures \code{42} from \code{/tasks/42} as a string. The Task layer
+then decides that identifiers must be positive base-10 integers. This ownership
+matters: a generic router should not assume every parameter is an integer, UUID,
+slug, or date.
+
+After a match, parameters are placed on the \code{Request}. A handler receives
+one object rather than a changing positional signature. More advanced frameworks
+offer typed converters and dependency injection; the explicit request structure
+keeps this project's data flow visible.
+
+\section{Queries refine a resource request}
+
+The path chooses the collection \code{/tasks}. Query parameters such as
+\code{status=todo}, \code{limit=20}, and \code{offset=0} refine the requested
+representation. They do not participate in route selection. The parser provides
+a mapping from each query name to a list of values so the application can reject
+unexpected repetition instead of silently choosing one.
+
+\begin{pitfall}
+Do not route on a raw target string. A target can contain a query, percent
+encoding, and repeated values. Parse the target once, match the decoded path by
+well-defined segment rules, and validate query semantics at the resource layer.
+\end{pitfall}
+
+\section{Routing is not authorization}
+
+Finding a handler means only that code exists for a method/path shape. A future
+authorization layer would still decide whether the authenticated principal may
+act on that particular resource. Returning 404 instead of 403 to hide existence
+is an application security policy, not a router inevitability.
+
+\summarytitle
+
+The router maps method and decoded path segments to handlers, with static routes
+ahead of parameter routes. It reports path absence separately from method
+mismatch, supplies HEAD/OPTIONS behavior, and leaves parameter/query meaning to
+the application.
+
+\reviewtitle
+\begin{enumerate}
+  \item Why should \code{/users/me} win over \code{/users/\{user\_id\}}?
+  \item What evidence distinguishes 404 from 405?
+  \item Why does the router leave task ID conversion to the handler layer?
+  \item Why should query parameters not be part of the route pattern here?
+\end{enumerate}
+
+\begin{exercise}[Route conflict table]
+Register static and parameter routes for tasks, task statistics, and one task.
+For ten paths and four methods, predict handler, captured parameters, allowed
+methods, and final status. Then encode the table as tests.
+\end{exercise}
+
+\begin{exercise}[Add a nested resource]
+Design patterns for \code{/projects/\{project\_id\}/tasks} and one nested task.
+Identify which parameters the current router captures and which validation remains
+in application code. Do not implement a database relation yet.
+\end{exercise}

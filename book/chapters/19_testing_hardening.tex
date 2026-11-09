@@ -1,0 +1,153 @@
+\chapter{Testing from functions to hostile streams}
+\chapterintro{The happy path proves almost nothing about a protocol implementation. Confidence comes from testing boundaries: fragmentation, ambiguity, limits, concurrency, rollback, and shutdown.}
+
+\begin{objectives}
+\begin{itemize}
+  \item Organize model, parser, application, repository, API, and network tests.
+  \item Test stream fragmentation independently from packet timing.
+  \item Use temporary databases and ephemeral ports for isolated integration tests.
+  \item Harden behavior through explicit malformed-input and concurrency cases.
+\end{itemize}
+\end{objectives}
+
+\section{A testing pyramid for this project}
+
+Fast unit tests cover deterministic functions and objects: Headers, JSON factories,
+parser feeds, router precedence, validation, and repository operations. Application
+tests call \code{app.handle} directly with Request objects. Network tests start a
+real listener on loopback and use raw sockets or \code{http.client}.
+
+Most cases belong below the network boundary because unit tests can control every
+fragment without timing. A smaller set of socket tests confirms that accept,
+timeouts, keep-alive, serialization, and shutdown connect correctly.
+
+\section{Parser tests are protocol examples}
+
+The parser suite demonstrates both ordinary and hostile messages:
+
+\codefile{../code/final/tests/test_models_parser.py}
+
+Feeding one byte at a time is more deterministic than trying to force TCP to
+produce one-byte reads. Putting two messages in one feed verifies leftover
+preservation. Declaring an oversized body without sending it verifies early
+rejection. Duplicate lengths and transfer coding test ambiguity policy.
+
+Every accepted feature should have malformed neighbors. If one Content-Length
+is accepted, test duplicate, negative, nondecimal, too large, incomplete, and
+combined transfer encoding. If percent encoding is accepted, test invalid hex
+and invalid UTF-8.
+
+\section{Application and API tests}
+
+Application tests prove static-route precedence, parameter capture, HEAD fallback,
+OPTIONS, 404/405, Allow, and middleware nesting without a socket. Task tests use
+a fresh temporary SQLite file and call the application directly.
+
+\codefile{../code/final/tests/test_task_api.py}
+
+The CRUD lifecycle test is intentionally stateful within one test: create, read,
+patch, replace, delete, and confirm absence. Separate tests cover filters,
+pagination, problem structure, query validation, SQL-shaped search text, and
+length requirements. Each test case receives its own database, so order does not
+matter.
+
+\section{Real socket integration}
+
+\codefile{../code/final/tests/test_server.py}
+
+The test configuration requests port zero. After the readiness event, the test
+reads the actual bound address. Teardown calls shutdown and joins the accept
+thread even when an assertion fails.
+
+One test uses \code{http.client} twice on a persistent connection and verifies
+HEAD body suppression. Another uses raw fragmented writes. Another sends a
+syntactically complete request without Host and inspects the 400 problem. The
+concurrency test launches 50 clients with explicit deadlines and requires every
+one to complete.
+
+\begin{pitfall}
+Never let a network test wait forever. Put timeouts on clients, wait for server
+readiness, and stop/join the server in teardown. A test that can hang the suite
+is itself a reliability defect.
+\end{pitfall}
+
+\section{Failure injection checklist}
+
+Before declaring the capstone complete, test:
+
+\begin{itemize}
+  \item connection close before header and before declared body completion;
+  \item bare LF, folded fields, invalid names, control characters, and missing Host;
+  \item unsupported version/method/target form/transfer coding/media type;
+  \item limits at one byte below, exactly at, and one byte above each boundary;
+  \item two buffered requests and a request split at every byte;
+  \item HEAD, 204, OPTIONS, Allow, and Connection close;
+  \item invalid JSON encoding/grammar/top-level type/fields/date/enums;
+  \item not found, PUT defaults, PATCH emptiness, delete twice;
+  \item database constraint and busy failures without partial writes;
+  \item queue saturation, read timeout, peer reset, and shutdown during activity.
+\end{itemize}
+
+Some OS timing failures can be difficult to make deterministic. Prefer injecting
+a fake or using socket pairs when the unit boundary permits. For the few end-to-
+end cases, use generous but finite deadlines and assert outcomes rather than
+sleeping for guessed durations.
+
+\section{Hardening review}
+
+The implementation has several deliberate defenses: loopback default, strict
+CRLF, Host requirement, framing ambiguity rejection, finite bytes/fields/time,
+finite workers/queue/connection requests, response-field control validation,
+media and UTF-8 checks, allow-list domain validation, parameterized SQL, generic
+500 responses, and no toy authentication.
+
+Remaining risks include an incomplete general HTTP implementation, limited
+timeout granularity, no TLS, no rate limiting, no authentication/authorization,
+no process isolation, minimal signal handling, simple logs, one-process capacity,
+and no security maintenance process. Naming these is part of hardening.
+
+\section{One-command verification}
+
+From the repository root:
+
+\begin{wiremessage}
+python build.py test
+\end{wiremessage}
+
+The helper runs snapshot tests and final tests. \code{python build.py all} also
+compiles the book, fails on undefined references and overfull boxes, and copies
+the approved PDF into \filepath{dist}.
+
+\begin{checkpoint}
+The capstone passes when a clean checkout can run all tests and build the PDF;
+50 concurrent local clients finish within deadlines; invalid framing never
+reaches a handler; temporary databases leave no persistent test state; and the
+reader can explain every intentional unsupported feature.
+\end{checkpoint}
+
+\summarytitle
+
+Tests mirror architectural boundaries. Parser tests control exact fragments;
+application tests bypass sockets; API tests isolate databases; network tests use
+ephemeral ports and deadlines. Hardening is the combination of strict parsing,
+finite resources, safe errors, storage discipline, and honest limitations.
+
+\reviewtitle
+\begin{enumerate}
+  \item Why is byte-at-a-time parser feeding better than hoping TCP fragments that way?
+  \item Which properties can only a real socket integration test establish?
+  \item Why must tests use temporary database paths and ephemeral ports?
+  \item Name five remaining production risks after the suite passes.
+\end{enumerate}
+
+\begin{exercise}[Boundary expansion]
+Choose one configured limit and add three tests: just below, exactly at, and just
+above it. State whether rejection can occur before the complete request arrives.
+\end{exercise}
+
+\begin{exercise}[Mini threat model]
+List assets, entry points, trust boundaries, attacker capabilities, existing
+controls, and missing controls for the Task API. Prioritize five risks by impact
+and likelihood without pretending the educational server will be deployed.
+\end{exercise}
+

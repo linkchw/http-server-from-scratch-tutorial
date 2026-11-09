@@ -1,0 +1,139 @@
+\chapter{Responses as values and bytes}
+\chapterintro{Handlers should describe a result; one serializer should enforce wire rules. Centralizing response construction prevents every route from reimplementing HTTP.}
+
+\begin{objectives}
+\begin{itemize}
+  \item Model status, fields, and body independently of socket I/O.
+  \item Serialize legal status lines and fields without response splitting.
+  \item Implement Content-Length, HEAD, no-content statuses, and connection fields correctly.
+  \item Keep internal error detail out of public 500 responses.
+\end{itemize}
+\end{objectives}
+
+\section{The response object}
+
+A handler should return a \code{Response}, not write to the socket. The response
+contains an integer status, a multi-value \code{Headers} collection, and a bytes
+body. This separation gives middleware a chance to inspect or replace the result,
+lets tests call handlers without networking, and gives one serializer authority
+over HTTP framing.
+
+Stage 4 isolates the concept in a small program:
+
+\codefile{../code/stages/04_response_serializer/server.py}
+
+The stage already computes content length, uses the standard status phrase, and
+sends no body for HEAD. The final serializer adds date/server fields, persistent
+connection policy, special no-content statuses, and header validation.
+
+\section{Headers must be safe to serialize}
+
+Response splitting becomes possible when untrusted text inserts carriage return
+or line feed into a field value. A value such as
+\code{"safe\\r\\nX-Injected: yes"} would create a second field if serialized
+blindly. The final \code{Headers.add} requires a legal token name and rejects
+control characters in values.
+
+This validation occurs when the collection is built, not after bytes have been
+joined. As a result, every response producer shares the same invariant: header
+items can be represented as one field line each.
+
+\section{One serialization path}
+
+The server's response method performs these steps:
+
+\begin{enumerate}
+  \item resolve the standard reason phrase for the numeric status;
+  \item copy fields so server-added metadata does not mutate the handler's object;
+  \item set Date, Server, and Connection;
+  \item determine whether the status permits content;
+  \item set Content-Length to the representation-body length when permitted;
+  \item suppress transmitted bytes for HEAD while preserving that length;
+  \item encode the start line as ASCII and fields as ISO-8859-1;
+  \item join one blank CRLF line and the permitted body, then call \code{sendall}.
+\end{enumerate}
+
+The serializer operates on bytes at its final boundary. It does not call
+\code{json.dumps}; JSON is a response factory concern.
+
+\section{HEAD and no-content statuses differ}
+
+For HEAD, the server computes the response that GET would have produced and
+suppresses content bytes. A recipient can learn the media type and expected
+length without transferring the representation.
+
+For 204 and 304, the status semantics prohibit message content. The serializer
+suppresses the body and removes \code{Content-Length} in this implementation.
+A handler that mistakenly attaches bytes cannot violate the wire rule.
+
+\begin{pitfall}
+Do not change a HEAD response's Content-Length to zero merely because zero body
+bytes are transmitted. That field describes the selected representation a GET
+would have carried, enabling useful metadata checks.
+\end{pitfall}
+
+\section{JSON and problem factories}
+
+\code{Response.json(value)} uses compact separators, preserves Unicode, encodes
+UTF-8, and sets \code{application/json; charset=utf-8}. A central factory means
+all handlers use the same encoding and media type.
+
+\code{Response.problem} creates an RFC 9457-style problem document with
+\code{type}, \code{title}, \code{status}, \code{detail}, optional
+\code{instance}, and optional field errors. It changes the media type to
+\code{application/problem+json}. Clients can handle errors structurally instead
+of scraping prose.
+
+An expected \code{HTTPError} carries public-safe detail. An unexpected exception
+is logged internally and converted to a generic 500 problem. Stack traces,
+database paths, SQL statements, and secrets must not cross the response boundary.
+
+\begin{wireview}
+An invalid task might receive:
+\begin{wiremessage}
+HTTP/1.1 422 Unprocessable Content
+Content-Type: application/problem+json; charset=utf-8
+Content-Length: ...
+
+{"type":"urn:task-api:problem:validation-error",
+ "title":"Validation failed","status":422,
+ "detail":"One or more values failed validation.",
+ "errors":{"title":"Must be a non-empty string."}}
+\end{wiremessage}
+The line wrapping above is for print; the actual JSON is one compact byte sequence.
+\end{wireview}
+
+\section{Test meaning and wire form separately}
+
+Handler tests should assert response status, fields, and decoded JSON. Serializer
+tests should assert exact CRLF framing, length, HEAD suppression, 204 behavior,
+and connection policy. Keeping these tests separate reveals which abstraction
+failed.
+
+\summarytitle
+
+Response values decouple application decisions from network serialization.
+Centralized header validation and serialization enforce length, HEAD, no-content,
+and connection rules consistently. JSON and problem factories produce predictable
+media types while unexpected failures remain private.
+
+\reviewtitle
+\begin{enumerate}
+  \item Why should a handler not write directly to a connection?
+  \item How can a newline in a field value become a vulnerability?
+  \item How do HEAD and 204 differ in their treatment of Content-Length?
+  \item Which error information belongs in logs but not a 500 response?
+\end{enumerate}
+
+\begin{exercise}[Serializer matrix]
+Create expected start line, Content-Length presence, and transmitted body length
+for GET/200, HEAD/200, GET/204, GET/304, and GET/500. Turn the matrix into unit
+tests before changing serializer code.
+\end{exercise}
+
+\begin{exercise}[Injection attempt]
+Construct a response field whose value contains CRLF. Verify that \code{Headers}
+rejects it before serialization. Explain why percent-encoding that input would
+not be a general replacement for validation.
+\end{exercise}
+
